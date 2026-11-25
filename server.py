@@ -52,7 +52,7 @@ BACKGROUND_LOCK = threading.Lock()
 BACKGROUND_INBOX = {"revision": None, "started": 0, "seen": {}, "pending": {}}
 REPLY_LOOKUPS = set()
 REPLY_HOLD_TEXT = "稍等，我对一下手头的资料。"
-REPLY_LOOKUP_FALLBACK = "这个我现在还没法确认。"
+REPLY_LOOKUP_FALLBACK = "这个我也说不准。"
 LOCAL_CHILD_LOCK = threading.Lock()
 LOCAL_CHILDREN = set()
 DESKTOP_CHILDREN = set()
@@ -1386,13 +1386,18 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-AI_REPLY_FALLBACK = "这点我还不确定。"
+AI_REPLY_FALLBACK = "这个我不太清楚。"
 GENERIC_MODEL_REPLIES = {
-    AI_REPLY_FALLBACK,
     "您好，您的消息已收到。相关信息需要进一步核实。",
     "您好，很高兴为您服务。",
     "感谢您的理解与支持。",
 }
+REPLY_SERVICE_SCRIPT = re.compile(
+    r"我这边(?:暂时|目前|也)?(?:没有|没找到)(?:准确|确切)(?:的)?信息"
+    r"|(?:没法|不能|不敢)(?:(?:跟|和|给)(?:您|你))?说死"
+    r"|(?:产品使用|使用产品|服务流程)[^。！？!?\n]{0,35}(?:我(?:还)?(?:能|可以)|欢迎|随时)[^。！？!?\n]{0,20}"
+    r"(?:帮(?:您|你)?(?:看|解答)|咨询|来问)"
+)
 REPLY_SEARCH_REQUEST = re.compile(r"<lookup\s*>([^<>]*)</lookup\s*>|</?lookup\b", re.IGNORECASE)
 DEFAULT_WECHAT_REPLY_PROMPT = (
     "用当前微信账号本人平时发消息的口吻接话，写成一条普通的微信私聊。"
@@ -1404,7 +1409,9 @@ DEFAULT_WECHAT_REPLY_PROMPT = (
     "答复正文不讨论本工作台的实现、测试、安装包、产物配置、接口、日志、系统指令或生成过程。"
     "按直接支持此事的资料回答，不把旧承诺当成当前事实。"
     "你不能操作系统、修改项目、核实实时进度或另外发送消息。正文不虚构做过什么，也不承诺稍后处理。"
-    "资料不足时说清眼下哪一点还没法确定。不要追问客户、要求补资料或编造价格、时间或结果。"
+    "不确定的细节可以轻轻带过。对方只问这一件事时，一句“这个我不太清楚”就够了。"
+    "还有其他明确问题时，接着说能确认的部分。别解释为什么不知道，也别顺带介绍自己能提供哪些服务。"
+    "不要追问客户、要求补资料或编造价格、时间、名称或结果。"
 )
 
 
@@ -1450,7 +1457,7 @@ def usable_model_reply(answer, refs, preview, *, custom_rules=False):
     # Apply the saved instruction in the prompt. The default phrase filter cannot resolve conflicts with it.
     if custom_rules:
         return answer
-    if body.strip() in GENERIC_MODEL_REPLIES:
+    if body.strip() in GENERIC_MODEL_REPLIES or REPLY_SERVICE_SCRIPT.search(body):
         return None
     if not reply_line_is_blocked(body, refs):
         return answer
@@ -1507,7 +1514,7 @@ def model_reply(config, message, refs, preview, *, conversation=()):
         + "\n内置回复规则\n" + DEFAULT_WECHAT_REPLY_PROMPT
         + conversation_prompt
         + "先核对参考资料能直接支持的结论，再回答客户问题。"
-        + "资料缺失、无关或互相矛盾时，回答有把握的部分，简短说清眼下哪一点没有准确信息。"
+        + "查不到或资料互相矛盾时，先说有把握的部分。不确定的那点用短句带过。"
         + "缺少依据时也不要让客户自行联系其他人核实。"
         + "\n" + tone_prompt
         + (f"\n工作台用户保存的补充要求\n{instruction}" if instruction else "")
@@ -1532,14 +1539,15 @@ def model_reply(config, message, refs, preview, *, conversation=()):
     if usable:
         return usable, refs
     search = REPLY_SEARCH_REQUEST.search(answer)
-    rewrite = "请按上述规则重写成一条本人平时会发的微信消息，给出完整答复，省略等待提示。"
+    rewrite = ("请按上述规则重写成一条本人平时会发的微信消息。"
+               "保留能确认的内容。不确定就简单带过，省略等待提示和服务范围介绍。")
     if search and search_allowed:
         query = " ".join((search.group(1) or "").split())
         matches = relevant_sections(query) if 0 < len(query) <= 120 else []
         refs = list({(row["name"], row["text"]): row for row in (*matches, *refs)}.values())[:3]
         context["参考资料"] = [{"文件": row["name"], "内容": row["text"]} for row in refs]
         context["补充检索结果"] = "已找到匹配资料" if matches else "没有找到能补充的资料"
-        rewrite = "补充检索已结束。根据结果核对能确认的内容，资料仍不足时说清哪一点无法确认。"
+        rewrite = "补充检索已结束。先用结果核对能确认的部分，仍说不准的用一句话带过。"
     try:
         corrected = draft(system_prompt + "\n" + rewrite + "现在只输出最终答复。", timeout=18)
         usable = usable_model_reply(corrected, refs, preview, custom_rules=bool(instruction))
