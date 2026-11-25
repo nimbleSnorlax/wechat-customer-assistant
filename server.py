@@ -74,6 +74,7 @@ GROUP_WORKER_TOKEN = secrets.token_urlsafe(32)
 UPDATE_LOCK = threading.Lock()
 UPDATE_INSTALL_LOCK = threading.Lock()
 UPDATE_CACHE = (None, 0.0, None)
+UPDATE_CACHE_SECONDS = 90
 APP_VERSION = release_update.installed_version(ROOT)
 MANAGED_UPDATE = os.environ.get("WECHAT_ASSISTANT_MANAGED_UPDATE") == "1"
 MIN_REPLY_CONTEXT_MESSAGES = 5
@@ -2335,7 +2336,7 @@ def latest_update(repository, force=False):
         source, expires, release = UPDATE_CACHE
         if force or source != repository or expires <= time.monotonic():
             release = release_update.find_update(repository, APP_VERSION)
-            UPDATE_CACHE = (repository, time.monotonic() + 3600, release)
+            UPDATE_CACHE = (repository, time.monotonic() + UPDATE_CACHE_SECONDS, release)
         return release
 
 

@@ -802,6 +802,9 @@ const editingModelKeys = new Set();
 let installedVersion = "", availableUpdate = null, versionCheckState = "";
 let updateRunning = false;
 let updateCheckId = 0;
+const automaticUpdateInterval = 120_000;
+const updateFocusCooldown = 15_000;
+let lastUpdateCheckAt = -Infinity;
 const styleChats = new Set();
 const maxStyleChats = 20;
 const systemStyleAccounts = new Set(["filehelper","weixin","fmessage","medianote","newsapp","brandsessionholder",
@@ -995,13 +998,12 @@ function paintVersionControl() {
   const latest = availableUpdate ? "最新版本 v" + availableUpdate.version : "";
   const state = availableUpdate ? "available" : versionCheckState === "current" ? "current"
     : versionCheckState === "unconfigured" ? "local" : "unknown";
-  const stateLabels = {current:"已是最新版本",local:"未配置更新源",unknown:"尚未确认是否为最新版本"};
-  const summary = latest || stateLabels[state];
+  const stateLabels = {available:"有新版可更新",current:"已是最新版本",local:"未配置更新源",unknown:"尚未确认是否为最新版本"};
   const button = $("version-button");
-  note("version-label",availableUpdate ? "新版 v" + availableUpdate.version : installedVersion ? "v" + installedVersion : "版本");
+  note("version-label",installedVersion ? "v" + installedVersion : "版本");
   $("version-dot").hidden = !(installedVersion || availableUpdate);
   button.dataset.updateStatus = state;
-  button.title = current + "，" + summary;
+  button.title = current + "，" + stateLabels[state];
   button.setAttribute("aria-label", button.title);
   note("installed-version",current);
   note("latest-version",latest);
@@ -1028,7 +1030,9 @@ $("dismiss-installed-update").addEventListener("click", () => {
   $("installed-update-notice").hidden = true;
 });
 async function checkUpdate(manual = false) {
-  if (updateRunning) return;
+  const now = Date.now();
+  if (updateRunning || (!manual && (document.hidden || now - lastUpdateCheckAt < updateFocusCooldown))) return;
+  lastUpdateCheckAt = now;
   const ticket = ++updateCheckId;
   if (manual) note("update-check-info","正在检查更新");
   try {
@@ -2369,7 +2373,9 @@ setInterval(() => {
 setInterval(loadStatus,45000);
 loadInstalledVersion();
 checkUpdate();
-setInterval(checkUpdate,60 * 60 * 1000);
+setInterval(checkUpdate,automaticUpdateInterval);
+window.addEventListener("focus",() => checkUpdate());
+document.addEventListener("visibilitychange",() => checkUpdate());
 </script>
 </body>
 </html>
