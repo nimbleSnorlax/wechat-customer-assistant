@@ -730,24 +730,26 @@ def run_sdk_directory(arguments, timeout):
     raise AppError("暂时无法读取微信通讯录。请保持一个已登录的电脑版微信打开，并重试。", 503)
 
 
-def sdk_contacts(query):
-    return [group_contact(item) for item in run_sdk_directory(("--contacts", query), 24)["people"]]
-
-
-def sync_wechat_tags():
-    profile = history_profile()
+def read_local_directory(profile, mode, failure, **filters):
     command = [str(CLI_PYTHON), str(ROOT / "style_history.py"), str(CLI_CONFIG)]
-    if not profile or not CLI_PYTHON.is_file():
-        raise AppError("请先配置当前微信的本机只读查询，再读取标签。", 409)
+    selection = json.dumps({"mode": mode, "owner": profile, **filters})
     try:
         with CLI_LOCK:
-            result = run_local(command, 30, json.dumps({"mode": "tags", "owner": profile}))
+            result = run_local(command, 30, selection)
         payload = json.loads(result.stdout) if result.returncode == 0 else None
     except (OSError, ValueError, subprocess.TimeoutExpired):
         payload = None
     if not isinstance(payload, dict) or payload.get("error"):
         raise AppError(payload["error"] if isinstance(payload, dict) and payload.get("error")
-                       else "暂时无法从本机资料读取微信标签，请稍后重试。", 503)
+                       else failure, 503)
+    return payload
+
+
+def sync_wechat_tags():
+    profile = history_profile()
+    if not profile or not CLI_PYTHON.is_file():
+        raise AppError("请先配置当前微信的本机只读查询，再读取标签。", 409)
+    payload = read_local_directory(profile, "tags", "暂时无法从本机资料读取微信标签，请稍后重试。")
     owner = text_field(payload.get("owner"), 60, "当前微信账号", True)
     labels = label_names(payload.get("labels"))
     includes_untagged = payload.get("includesUntagged") is True
@@ -839,26 +841,19 @@ def identify_setup_account():
 
 
 def contact_results(query, *, setup=False):
-    if NATIVE_CONTACTS:
-        people = sdk_contacts(query)
-        if setup:
-            for person in people:
-                person["tail"] = person["id"].rsplit(":", 1)[-1][-4:]
-        return people
-    payload = wechat_cli("contacts", "--limit", 20, "--format", "json", "--query=" + query)
-    people = [{"id": row["username"], "name": row["remark"] or row["nick_name"] or row["username"]}
-              for row in payload if not row["username"].endswith("@chatroom")]
+    profile = history_profile()
+    if profile and CLI_PYTHON.is_file():
+        directory = read_local_directory(profile, "contacts", "暂时无法从本机资料搜索微信联系人。", query=query)
+        if history_profile() != profile:
+            raise AppError("搜索时微信资料账号已更换，请重新搜索。", 409)
+    elif setup and NATIVE_CONTACTS:
+        directory = run_sdk_directory(("--contacts", query), 24)
+    else:
+        raise AppError("请先配置当前微信的本机只读查询，再搜索联系人。", 409)
+    people = [group_contact(item) for item in directory["people"]]
     if setup:
-        owner = read_account()["profile"]
-        people = [person for person in people if person["id"] not in (owner, "filehelper")]
-        names = [person["name"] for person in people]
         for person in people:
-            if names.count(person["name"]) > 1:
-                try:
-                    details = wechat_cli("contacts", "--format", "json", "--detail=" + person["id"])
-                    person["tail"] = (details.get("alias") or person["id"])[-4:]
-                except AppError:
-                    person["tail"] = person["id"][-4:]
+            person["tail"] = person["id"].rsplit(":", 1)[-1][-4:]
     return people
 
 

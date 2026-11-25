@@ -4,7 +4,9 @@ import json
 import sqlite3
 import sys
 import re
-from contextlib import closing
+import unicodedata
+from collections import Counter
+from contextlib import closing, contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -28,6 +30,8 @@ REPLY_CONTEXT_LIMIT = 50
 DEFAULT_REPLY_CONTEXT = 20
 WECHAT_ALIAS = re.compile(r"[A-Za-z0-9_-]{1,60}")
 CONTACT_LABEL_FIELD = 30
+SYSTEM_CONTACTS = {"filehelper", "weixin", "fmessage", "medianote", "newsapp", "brandsessionholder",
+                   "notifymessage", "weixinreminder", "appbrandcustomerservicemsg"}
 
 
 def read_varint(data, offset):
@@ -77,44 +81,98 @@ def contact_label_ids(data):
     return labels
 
 
-def read_contact_tag_catalog(config_path, profile):
+class ContactDirectoryError(ValueError):
+    pass
+
+
+@contextmanager
+def contact_directory(config_path, profile):
     app = AppContext(config_path)
     if not profile or get_self_username(app.db_dir, app.cache, app.decrypted_dir) != profile:
-        return {"error": "本机只读资料与当前微信账号不一致。"}
+        raise ContactDirectoryError("本机只读资料与当前微信账号不一致。")
     path = app.cache.get("contact/contact.db")
     if not path:
-        return {"error": "暂时无法读取本机微信通讯录。"}
+        raise ContactDirectoryError("暂时无法读取本机微信通讯录。")
     snapshot = Path(path).resolve().as_uri() + "?mode=ro"
     with closing(sqlite3.connect(snapshot, uri=True, timeout=3)) as connection:
         owner_row = connection.execute("SELECT alias FROM contact WHERE username=?", (profile,)).fetchone()
         owner = (owner_row[0] or profile) if owner_row else ""
         if not WECHAT_ALIAS.fullmatch(owner):
-            return {"error": "无法核对本机资料所属的微信账号。"}
-        labels = {label_id: name.strip() for label_id, name in connection.execute(
-            "SELECT label_id_, label_name_ FROM contact_label ORDER BY sort_order_, label_id_"
-        ) if type(label_id) is int and label_id > 0 and isinstance(name, str) and name.strip()}
-        if not labels:
-            return {"owner": owner, "labels": [], "people": [], "includesUntagged": False}
-        contacts = connection.execute(
-            "SELECT username, alias, remark, nick_name, extra_buffer FROM contact "
-            "WHERE local_type=1 AND delete_flag=0 AND username IS NOT NULL"
-        ).fetchall()
+            raise ContactDirectoryError("无法核对本机资料所属的微信账号。")
+        yield connection, owner
 
-    names, aliases = {}, {}
-    members = []
-    needs_review = False
-    for username, alias, remark, nickname, data in contacts:
-        if (username == profile or username.startswith("gh_") or username.endswith("@chatroom")
-                or username in {"filehelper", "weixin", "fmessage", "medianote", "newsapp", "brandsessionholder",
-                                "notifymessage", "weixinreminder", "appbrandcustomerservicemsg"}):
+
+def directory_contacts(connection, profile, owner):
+    rows = connection.execute(
+        "SELECT username, alias, remark, nick_name, extra_buffer FROM contact "
+        "WHERE local_type=1 AND delete_flag=0 AND username IS NOT NULL"
+    )
+    contacts = []
+    for username, alias, remark, nickname, extra in rows:
+        if (not username or username == profile or username.startswith("gh_") or username.endswith("@chatroom")
+                or username in SYSTEM_CONTACTS):
             continue
         alias = alias or username
         name = (remark or nickname or username).strip()
         if not WECHAT_ALIAS.fullmatch(alias) or alias.casefold() == owner.casefold() or not 0 < len(name) <= 80:
             continue
-        names[name] = names.get(name, 0) + 1
-        key = alias.casefold()
-        aliases[key] = aliases.get(key, 0) + 1
+        contacts.append((name, alias, nickname or "", username, extra))
+    return contacts
+
+
+def unique_contact_aliases(contacts):
+    names = Counter(name for name, *_ in contacts)
+    aliases = Counter(alias.casefold() for _, alias, *_ in contacts)
+    return {alias for name, alias, *_ in contacts if names[name] == 1 and aliases[alias.casefold()] == 1}
+
+
+def contact_search_text(text):
+    return "".join(unicodedata.normalize("NFKC", text).casefold().split())
+
+
+def search_contact_directory(config_path, profile, query):
+    needle = contact_search_text(query)
+    if not needle:
+        return {"people": []}
+    matches = []
+    try:
+        with contact_directory(config_path, profile) as (connection, owner):
+            contacts = directory_contacts(connection, profile, owner)
+            unique_aliases = unique_contact_aliases(contacts)
+            for name, alias, nickname, username, _ in contacts:
+                if alias not in unique_aliases:
+                    continue
+                tokens = [contact_search_text(text) for text in (name, nickname, alias, username)]
+                if needle in tokens:
+                    rank = 0
+                elif any(term.startswith(needle) for term in tokens):
+                    rank = 1
+                elif any(needle in term for term in tokens):
+                    rank = 2
+                else:
+                    continue
+                matches.append((rank, name, alias))
+    except ContactDirectoryError as error:
+        return {"error": str(error)}
+    matches.sort(key=lambda contact: (contact[0], contact[1].casefold()))
+    return {"people": [{"id": f"uia:{owner}:{alias}", "name": name} for _, name, alias in matches[:20]]}
+
+
+def read_contact_tag_catalog(config_path, profile):
+    try:
+        with contact_directory(config_path, profile) as (connection, owner):
+            labels = {label_id: name.strip() for label_id, name in connection.execute(
+                "SELECT label_id_, label_name_ FROM contact_label ORDER BY sort_order_, label_id_"
+            ) if type(label_id) is int and label_id > 0 and isinstance(name, str) and name.strip()}
+            if not labels:
+                return {"owner": owner, "labels": [], "people": [], "includesUntagged": False}
+            contacts = directory_contacts(connection, profile, owner)
+    except ContactDirectoryError as error:
+        return {"error": str(error)}
+
+    people = []
+    needs_review = False
+    for name, alias, _, _, data in contacts:
         try:
             identifiers = contact_label_ids(data)
         except ValueError:
@@ -123,12 +181,11 @@ def read_contact_tag_catalog(config_path, profile):
             needs_review = True
             continue
         tags = [name for label_id, name in labels.items() if label_id in identifiers]
-        members.append((alias, name, tags))
-    people = [{"id": f"uia:{owner}:{alias}", "name": name, "tags": tags}
-              for alias, name, tags in members if names[name] == 1 and aliases[alias.casefold()] == 1]
-    if not members and needs_review:
+        people.append({"id": f"uia:{owner}:{alias}", "name": name, "tags": tags})
+    if not people and needs_review:
         return {"error": "当前微信的标签成员资料暂时无法核对。请先在微信里打开通讯录后刷新。"}
-    return {"owner": owner, "labels": list(labels.values()), "people": people,
+    unique_ids = {f"uia:{owner}:{alias}" for alias in unique_contact_aliases(contacts)}
+    return {"owner": owner, "labels": list(labels.values()), "people": [person for person in people if person["id"] in unique_ids],
             "includesUntagged": not needs_review}
 
 
@@ -345,6 +402,8 @@ if __name__ == "__main__":
             result = history_page(sys.argv[1], selection)
         elif selection.get("mode") == "tags":
             result = read_contact_tag_catalog(sys.argv[1], selection["owner"])
+        elif selection.get("mode") == "contacts":
+            result = search_contact_directory(sys.argv[1], selection["owner"], selection["query"])
         else:
             result = own_replies(sys.argv[1], selection["chats"], selection["days"])
     except Exception:
