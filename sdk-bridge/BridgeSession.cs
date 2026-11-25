@@ -18,6 +18,8 @@ internal sealed class BridgeSession : IDisposable
 
     internal static BridgeSession Open(int? processId = null)
     {
+        var selected = processId ?? WeChatWindows.LoggedInProcess()
+            ?? throw new InvalidOperationException("Open one authenticated WeChat client.");
         var services = WeAutomation.Initialize(options =>
         {
             options.ConfigureDesktopEnvironment = false;
@@ -30,11 +32,7 @@ internal sealed class BridgeSession : IDisposable
         try
         {
             var factory = services.GetRequiredService<WeChatClientFactory>();
-            if (processId is int selected)
-                return new BridgeSession(services, factory.ConnectMainWindow(selected));
-            var names = factory.GetWeChatClientNames();
-            if (names.Count != 1) throw new InvalidOperationException("Open one authenticated WeChat client.");
-            return new BridgeSession(services, factory.GetWeChatClient(names[0]));
+            return new BridgeSession(services, factory.ConnectMainWindow(selected));
         }
         catch
         {

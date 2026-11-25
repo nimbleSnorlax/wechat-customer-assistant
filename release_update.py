@@ -6,6 +6,7 @@ import io
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 import urllib.error
@@ -16,6 +17,9 @@ from pathlib import Path
 
 EXIT_TO_UPDATE = 75
 FILES = ("server.py", "style_history.py", "index.html", "release_update.py", "app_version.txt")
+BRIDGE_VERSION = "0.1.41"
+BRIDGE_FILES = ("WeChatBridge.dll", "WeChatAuto.dll", "WeAutoCommon.dll")
+BRIDGE_MARKER = "bridge-version.txt"
 VERSION_PATTERN = re.compile(r"v?((?:0|[1-9][0-9]{0,5})\.(?:0|[1-9][0-9]{0,5})\.(?:0|[1-9][0-9]{0,5}))")
 REPOSITORY_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}")
 FOLDER_PATTERN = re.compile(r"[0-9.]+-[0-9a-f]{12}-[a-z0-9_]{6,16}")
@@ -42,6 +46,18 @@ def version_key(value):
 
 def package_name(value):
     return f"WeChatAssistant-{version(value)}-update.zip"
+
+
+def bridge_package_name():
+    return f"WeChatAssistant-{BRIDGE_VERSION}-bridge.zip"
+
+
+def bridge_ready(folder):
+    try:
+        return ((folder / BRIDGE_MARKER).read_text(encoding="ascii").strip() == BRIDGE_VERSION
+                and all((folder / name).is_file() for name in BRIDGE_FILES))
+    except (OSError, UnicodeError):
+        return False
 
 
 def read_json(path):
@@ -174,6 +190,63 @@ def unpack_release(raw, expected_version):
         raise UpdateError("更新包解包或语法检查失败。") from error
 
 
+def unpack_bridge(raw):
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            entries = archive.infolist()
+            if (sorted(entry.filename for entry in entries) != sorted(BRIDGE_FILES)
+                    or sum(entry.file_size for entry in entries) > MAX_UNPACKED):
+                raise UpdateError("微信组件包文件清单不匹配。")
+            files = {name: archive.read(name) for name in BRIDGE_FILES}
+            if not all(data.startswith(b"MZ") for data in files.values()):
+                raise UpdateError("微信组件包文件无效。")
+            return files
+    except (zipfile.BadZipFile, OSError, RuntimeError, ValueError) as error:
+        raise UpdateError("无法读取微信组件包。") from error
+
+
+def install_bridge(repository, bundled, destination):
+    if bridge_ready(destination):
+        return
+    raw = github_request(f"/repos/{repository}/releases/tags/v{BRIDGE_VERSION}",
+                         "application/vnd.github+json", 1_000_000)
+    try:
+        release = json.loads(raw)
+        if release["draft"] or release["prerelease"] or version(release["tag_name"]) != BRIDGE_VERSION:
+            raise UpdateError("微信组件发行版无效。")
+        asset = next(item for item in release["assets"] if item["name"] == bridge_package_name())
+        size, asset_id = asset["size"], asset["id"]
+        digest = re.fullmatch(r"sha256:([0-9a-f]{64})", asset.get("digest") or "", re.IGNORECASE)
+        if not digest or type(size) is not int or not 0 < size <= MAX_DOWNLOAD or type(asset_id) is not int or asset_id < 1:
+            raise UpdateError("微信组件包缺少完整性信息。")
+    except (StopIteration, ValueError, KeyError, TypeError) as error:
+        raise UpdateError("发行版中没有可用的微信组件包。") from error
+
+    package = github_request(f"/repos/{repository}/releases/assets/{asset_id}",
+                             "application/octet-stream", size, download=True)
+    if len(package) != size or hashlib.sha256(package).hexdigest() != digest[1].lower():
+        raise UpdateError("微信组件包校验失败。")
+    files = unpack_bridge(package)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="stage-", dir=destination.parent) as stage:
+        candidate = Path(stage) / "sdk"
+        shutil.copytree(bundled, candidate)
+        for name, data in files.items():
+            (candidate / name).write_bytes(data)
+        (candidate / BRIDGE_MARKER).write_text(BRIDGE_VERSION + "\n", encoding="ascii")
+        retired = Path(stage) / "previous"
+        if destination.exists():
+            if bridge_ready(destination):
+                return
+            os.replace(destination, retired)
+        try:
+            os.replace(candidate, destination)
+        except OSError:
+            if retired.exists():
+                os.replace(retired, destination)
+            raise
+
+
 def stage_update(home, repository, release, *, progress=None):
     path = f"/repos/{repository}/releases/assets/{release['asset']}"
     on_download = None
@@ -239,8 +312,24 @@ def build_package(root, value):
     return output
 
 
+def build_bridge_package(root):
+    output = root / "dist" / bridge_package_name()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=output.parent) as staging:
+        candidate = Path(staging) / output.name
+        with zipfile.ZipFile(candidate, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for name in BRIDGE_FILES:
+                archive.write(root / ".run" / "sdk" / name, name)
+        unpack_bridge(candidate.read_bytes())
+        os.replace(candidate, output)
+    return output
+
+
 if __name__ == "__main__":
+    if sys.argv[1:] == ["--build-bridge"]:
+        print(build_bridge_package(Path(__file__).resolve().parent))
+        raise SystemExit(0)
     if len(sys.argv) != 3 or sys.argv[1] != "--build":
-        raise SystemExit("用法：python release_update.py --build 0.1.1")
+        raise SystemExit("用法：python release_update.py --build <版本> 或 --build-bridge")
     print(build_package(Path(__file__).resolve().parent, sys.argv[2]))
 

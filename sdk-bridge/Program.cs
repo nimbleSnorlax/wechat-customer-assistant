@@ -24,7 +24,6 @@ try
     }
     if (args is ["--account"])
     {
-        if (WeChatWindows.CountLoggedIn() != 1) return 1;
         using var session = BridgeSession.Open();
         Console.WriteLine("WECHAT_RESULT " + JsonSerializer.Serialize(new
         { name = session.Client.NickName, alias = session.Client.Alias }));
@@ -32,14 +31,12 @@ try
     }
     if (args is ["--tag-directory"])
     {
-        if (WeChatWindows.CountLoggedIn() != 1) return 1;
         using var session = BridgeSession.Open();
         Console.WriteLine("WECHAT_RESULT " + JsonSerializer.Serialize(await session.ReadTagDirectory()));
         return 0;
     }
     if (args is ["--contacts", var query])
     {
-        if (WeChatWindows.CountLoggedIn() != 1) return 1;
         using var session = BridgeSession.Open();
         Console.WriteLine("WECHAT_RESULT " + JsonSerializer.Serialize(await session.SearchContacts(query)));
         return 0;
@@ -57,6 +54,14 @@ catch (Exception error)
 
 internal static class WeChatWindows
 {
+    private static readonly string[] ClientNames = ["Weixin", "WeChat"];
+
+    private static bool IsClientName(string name) =>
+        ClientNames.Contains(name, StringComparer.OrdinalIgnoreCase);
+
+    private static IEnumerable<Process> ClientProcesses() =>
+        ClientNames.SelectMany(name => Process.GetProcessesByName(name));
+
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
 
@@ -84,7 +89,7 @@ internal static class WeChatWindows
         try
         {
             using var process = Process.GetProcessById(processId);
-            return process.ProcessName.Equals("Weixin", StringComparison.OrdinalIgnoreCase);
+            return IsClientName(process.ProcessName);
         }
         catch (ArgumentException) { return false; }
         catch (InvalidOperationException) { return false; }
@@ -94,7 +99,7 @@ internal static class WeChatWindows
     {
         using var automation = new UIA3Automation();
         string? installed = null;
-        foreach (var process in Process.GetProcessesByName("Weixin"))
+        foreach (var process in ClientProcesses())
         {
             using (process)
             {
@@ -118,14 +123,19 @@ internal static class WeChatWindows
             yield return installed;
             foreach (var registry in new[] { Registry.CurrentUser, Registry.LocalMachine })
             {
-                using var app = registry.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\Weixin.exe");
-                yield return app?.GetValue(null) as string;
+                foreach (var name in ClientNames)
+                {
+                    using var app = registry.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\" + name + ".exe");
+                    yield return app?.GetValue(null) as string;
+                }
                 foreach (var key in new[] { @"SOFTWARE\Tencent\Weixin", @"SOFTWARE\Tencent\WeChat",
                     @"SOFTWARE\WOW6432Node\Tencent\Weixin", @"SOFTWARE\WOW6432Node\Tencent\WeChat" })
                 {
                     using var item = registry.OpenSubKey(key);
                     var folder = item?.GetValue("InstallPath") as string;
-                    if (!string.IsNullOrWhiteSpace(folder)) yield return Path.Combine(folder, "Weixin.exe");
+                    if (!string.IsNullOrWhiteSpace(folder))
+                        foreach (var name in ClientNames)
+                            yield return Path.Combine(folder, name + ".exe");
                 }
             }
             foreach (var location in new[] { Environment.SpecialFolder.ProgramFiles, Environment.SpecialFolder.ProgramFilesX86,
@@ -133,13 +143,15 @@ internal static class WeChatWindows
             {
                 var root = Environment.GetFolderPath(location);
                 if (!string.IsNullOrWhiteSpace(root))
-                    yield return Path.Combine(root, "Tencent", "Weixin", "Weixin.exe");
+                    foreach (var name in ClientNames)
+                        yield return Path.Combine(root, "Tencent", name, name + ".exe");
             }
         }
         var path = Locations().Where(item => !string.IsNullOrWhiteSpace(item))
             .Select(item => Environment.ExpandEnvironmentVariables(item!.Trim('"')))
             .FirstOrDefault(item => Path.IsPathFullyQualified(item) &&
-                string.Equals(Path.GetFileName(item), "Weixin.exe", StringComparison.OrdinalIgnoreCase) && File.Exists(item));
+                string.Equals(Path.GetExtension(item), ".exe", StringComparison.OrdinalIgnoreCase)
+                && IsClientName(Path.GetFileNameWithoutExtension(item)) && File.Exists(item));
         if (path is null) return false;
         using var launched = Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
         return launched is not null;
@@ -159,7 +171,7 @@ internal static class WeChatWindows
         {
             using var process = Process.GetProcessById(processId);
             var handle = process.MainWindowHandle;
-            if (handle == IntPtr.Zero || !process.ProcessName.Equals("Weixin", StringComparison.OrdinalIgnoreCase))
+            if (handle == IntPtr.Zero || !IsClientName(process.ProcessName))
                 return false;
             if (IsIconic(handle))
             {
@@ -190,18 +202,17 @@ internal static class WeChatWindows
 
     private static IEnumerable<AutomationElement> FindLoggedIn(UIA3Automation automation)
     {
-        foreach (var process in Process.GetProcessesByName("Weixin"))
+        foreach (var process in ClientProcesses())
         {
             using (process)
             {
                 var handle = process.MainWindowHandle;
                 if (handle == IntPtr.Zero) continue;
                 var window = automation.FromHandle(handle);
-                var toolbar = window?.FindFirstDescendant(condition => condition
-                    .ByAutomationId("MainView.main_tabbar")
-                    .Or(condition.ByName(WeChatConstant.WECHAT_NAVIGATION_NAVIGATION)
-                        .And(condition.ByControlType(ControlType.ToolBar)))
-                    .Or(condition.ByName("导航").And(condition.ByControlType(ControlType.ToolBar))));
+                var toolbar = window?.FindFirstDescendant(condition => condition.ByControlType(ControlType.ToolBar)
+                    .And(condition.ByAutomationId("MainView.main_tabbar")
+                        .Or(condition.ByName(WeChatConstant.WECHAT_NAVIGATION_NAVIGATION))
+                        .Or(condition.ByName("导航")).Or(condition.ByName("導覽")).Or(condition.ByName("Navigation"))));
                 if (window is not null && toolbar is not null) yield return window;
             }
         }

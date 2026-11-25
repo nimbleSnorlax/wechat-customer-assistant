@@ -40,12 +40,14 @@ python -m pip install --target .python pypdf==6.21.4
 pwsh -File Build-Setup.ps1 -Repository nimbleSnorlax/wechat-customer-assistant -ReaderSource .thirdparty/wechat-cli-plus
 ```
 
-工作台代码位于 `server.py`、`index.html`、`installer` 和 `sdk-bridge`。微信界面操作使用 SDK，后台接收和历史整理使用安装电脑已有的只读来源配置。历史查询工具路径可通过 `WECHAT_CLI_PATH` 和 `WECHAT_CLI_CONFIG` 指定。SDK 补丁的许可见 [上游 MIT 许可](patches/WeChatAuto.SDK.LICENSE.txt)。
+工作台代码位于 `server.py`、`index.html`、`installer` 和 `sdk-bridge`。微信界面操作使用 SDK。Windows 微信 4.x 的后台接收、历史整理和回复上下文使用对应账号的 `db_storage` 本机只读资料，适用于通过 `Weixin.exe` 或 `WeChat.exe` 登录的客户端。历史查询工具路径可通过 `WECHAT_CLI_PATH` 和 `WECHAT_CLI_CONFIG` 指定。SDK 补丁的许可见 [上游 MIT 许可](patches/WeChatAuto.SDK.LICENSE.txt)。
 
 ## 通过 GitHub 更新工作台
 
 1. 完整安装包通过 `Build-Setup.ps1 -Repository 所有者/仓库名` 指定公开更新源。安装包名为 `WeChatAssistant-<版本>-Setup-x64.exe`。
 2. 用 `pwsh -File Build-Update.ps1 -Version (Get-Content app_version.txt)` 生成对应版本的工作台更新包。
 3. 把安装包和更新包上传到对应标签的 GitHub 正式发行版。工作台在前台每两分钟检查一次。发现新版后，当前版本号旁会闪烁黄点，打开详情可查看新版号并点击「下载并更新」。公开发行版可直接下载。
+
+微信组件有改动的版本，先在 `release_update.py` 更新 `BRIDGE_VERSION`。编译安装包后运行 `python release_update.py --build-bridge`，将生成的组件包上传到同一个发行版。
 
 更新包包含工作台代码。用户配置、知识库和本机运行依赖位于安装目录的独立文件夹里。若新版启动失败，启动程序会回到更新前的版本。联系人搜索、后台接收和历史语气分析使用安装电脑上对应微信账号的只读来源配置。

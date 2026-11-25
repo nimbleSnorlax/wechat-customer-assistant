@@ -1,5 +1,5 @@
 diff --git a/WeAutoCommon/Configs/WeChatConfig.cs b/WeAutoCommon/Configs/WeChatConfig.cs
-index 9615c78d42ce33229d72ad391cfb50a2a00fc9ed..54d0b5cb342ee45766bb9231490b871c08247991 100644
+index 9615c78..54d0b5c 100644
 --- a/WeAutoCommon/Configs/WeChatConfig.cs
 +++ b/WeAutoCommon/Configs/WeChatConfig.cs
 @@ -1,4 +1,4 @@
@@ -18,7 +18,7 @@ index 9615c78d42ce33229d72ad391cfb50a2a00fc9ed..54d0b5cb342ee45766bb9231490b871c
          /// 微信存储位置，取法: 微信主窗口--> 设置 --> 账号与存储 --> 存储位置（形如 <c>D:\xwechat_files</c>）。
          /// 如果有多微信，多个微信应该设置成一样（微信自身就是这种设定）。
 diff --git a/WeAutoCommon/Models/FriendInfo.cs b/WeAutoCommon/Models/FriendInfo.cs
-index b6712999299780dff1b8b0c7f76712e2d6e876b6..5f6057efa6cad086992accac5615d074e636a368 100644
+index b671299..5f6057e 100644
 --- a/WeAutoCommon/Models/FriendInfo.cs
 +++ b/WeAutoCommon/Models/FriendInfo.cs
 @@ -39,6 +39,9 @@ namespace WeAutoCommon.Models
@@ -39,7 +39,7 @@ index b6712999299780dff1b8b0c7f76712e2d6e876b6..5f6057efa6cad086992accac5615d074
 \ No newline at end of file
 +}
 diff --git a/WeAutoCommon/Utils/UIThreadInvoker.cs b/WeAutoCommon/Utils/UIThreadInvoker.cs
-index e123c8c1375c56e5635349d7ce6d5f5f3ed09a3d..bf09e4d89135989c73e64f3c308ef36ee03740b9 100644
+index e123c8c..bf09e4d 100644
 --- a/WeAutoCommon/Utils/UIThreadInvoker.cs
 +++ b/WeAutoCommon/Utils/UIThreadInvoker.cs
 @@ -100,7 +100,7 @@ namespace WeAutoCommon.Utils
@@ -51,8 +51,34 @@ index e123c8c1375c56e5635349d7ce6d5f5f3ed09a3d..bf09e4d89135989c73e64f3c308ef36e
              _queue.Add(automation =>
              {
                  try
+diff --git a/WeChatAuto4_X/WeChatAuto/Components/ChatHeader.cs b/WeChatAuto4_X/WeChatAuto/Components/ChatHeader.cs
+index 3ee2306..4bdea1d 100644
+--- a/WeChatAuto4_X/WeChatAuto/Components/ChatHeader.cs
++++ b/WeChatAuto4_X/WeChatAuto/Components/ChatHeader.cs
+@@ -131,14 +131,15 @@ namespace WeChatAuto.Components
+ 
+ 		private bool IsHasHistoryButton()
+ 		{
+-			var button = _Client.MainWindow.FindFirstDescendant(cf => cf.ByControlType(ControlType.Button).And(cf.ByName("聊天记录")).And(cf.ByClassName("mmui::XButton")));
+-			return button == null ? false : true;
++            return _Client.MainWindow.FindFirstDescendant(cf =>
++                cf.ByControlType(ControlType.Button).And(cf.ByClassName("mmui::XButton"))
++                    .And(cf.ByName("聊天记录").Or(cf.ByName("聊天記錄")).Or(cf.ByName("Chat History")))) != null;
+ 		}
+ 
+ 		private bool IsHasVoIpButton()
+ 		{
+-			var button = _Client.MainWindow.FindFirstDescendant(cf => cf.ByControlType(ControlType.Button).And(cf.ByName("语音通话")).And(cf.ByClassName("mmui::XButton").And(cf.ByAutomationId("voip_button"))));
+-			return button == null ? false : true;
++            return _Client.MainWindow.FindFirstDescendant(cf =>
++                cf.ByControlType(ControlType.Button).And(cf.ByClassName("mmui::XButton")).And(cf.ByAutomationId("voip_button"))) != null;
+ 		}
+ 	}
+-}
+\ No newline at end of file
++}
 diff --git a/WeChatAuto4_X/WeChatAuto/Components/ConversationList.cs b/WeChatAuto4_X/WeChatAuto/Components/ConversationList.cs
-index 763a7d46c74dfa80de307a2f16ec7a3c318c5ff7..c9ccbf29a0ef7f9bd51cb5c3536227df96488c8d 100644
+index 763a7d4..956812e 100644
 --- a/WeChatAuto4_X/WeChatAuto/Components/ConversationList.cs
 +++ b/WeChatAuto4_X/WeChatAuto/Components/ConversationList.cs
 @@ -229,7 +229,7 @@ namespace WeChatAuto.Components
@@ -64,19 +90,20 @@ index 763a7d46c74dfa80de307a2f16ec7a3c318c5ff7..c9ccbf29a0ef7f9bd51cb5c3536227df
              if (!result)
              {
                  result = _SearchFromEdit(who, root);
-@@ -419,7 +419,10 @@ namespace WeChatAuto.Components
+@@ -419,7 +419,11 @@ namespace WeChatAuto.Components
          {
              //通过搜索框搜索]
              var path = UITreeGlobal.Search_Bar_Edit;
 -            var edit = _Client.MainWindow.FindFirstByXPath(path);
 +            var edit = _Client.MainWindow.FindFirstByXPath(path) ??
-+                _Client.MainWindow.FindFirstDescendant(cf => cf.ByName("搜索").And(cf.ByControlType(ControlType.Edit)));
++                _Client.MainWindow.FindFirstDescendant(cf => cf.ByControlType(ControlType.Edit)
++                    .And(cf.ByName("搜索").Or(cf.ByName("搜尋")).Or(cf.ByName("Search"))));
 +            if (edit == null)
 +                throw new InvalidOperationException("微信搜索框不可用。");
              edit.Focus();
              edit.DrawHighlightExt();
              edit.AsTextBox().Text = who;
-@@ -428,7 +431,8 @@ namespace WeChatAuto.Components
+@@ -428,7 +432,8 @@ namespace WeChatAuto.Components
              var popWinResult = Retry.WhileNull(() =>
              {
                  path = UITreeGlobal.Search_Bar_PopupMenu;
@@ -86,7 +113,7 @@ index 763a7d46c74dfa80de307a2f16ec7a3c318c5ff7..c9ccbf29a0ef7f9bd51cb5c3536227df
              }, timeout: TimeSpan.FromSeconds(1), interval: TimeSpan.FromMilliseconds(200));
  
              if (popWinResult.Success)
-@@ -436,6 +440,11 @@ namespace WeChatAuto.Components
+@@ -436,10 +441,16 @@ namespace WeChatAuto.Components
                  var popupList = popWinResult.Result;
                  popupList.DrawHighlightExt();
                  var firstItem = popupList.FindFirstChild();
@@ -98,7 +125,22 @@ index 763a7d46c74dfa80de307a2f16ec7a3c318c5ff7..c9ccbf29a0ef7f9bd51cb5c3536227df
                  var fistFlag = true;
                  if (firstItem.Name.Equals("群聊") ||
                      firstItem.Name.Equals("联系人") ||
-@@ -687,7 +696,10 @@ namespace WeChatAuto.Components
+-                    firstItem.Name.Equals("最常使用"))
++                    firstItem.Name.Equals("最常使用") ||
++                    firstItem.Name is "Group Chats" or "Contacts" or "Frequently Used")
+                 {
+                     AutomationElement item = null;
+                     var index = 0;
+@@ -472,7 +483,7 @@ namespace WeChatAuto.Components
+                 }
+                 else
+                 {
+-                    firstItem = popupList.FindFirstChild(cf => cf.ByName("群聊"));
++                    firstItem = popupList.FindFirstChild(cf => cf.ByName("群聊").Or(cf.ByName("Group Chats")));
+                     if (firstItem == null)
+                     {
+                         Keyboard.Type(VirtualKeyShort.ESC);
+@@ -687,7 +698,10 @@ namespace WeChatAuto.Components
              var path = UITreeGlobal.ConversationRootPath;
              while (index < 3)
              {
@@ -110,7 +152,7 @@ index 763a7d46c74dfa80de307a2f16ec7a3c318c5ff7..c9ccbf29a0ef7f9bd51cb5c3536227df
                  if (!rootRetry.Success)
                  {
                      _logger.Error("错误: 没有发现");
-@@ -869,4 +881,4 @@ namespace WeChatAuto.Components
+@@ -869,4 +883,4 @@ namespace WeChatAuto.Components
              }
          }
      }
@@ -118,7 +160,7 @@ index 763a7d46c74dfa80de307a2f16ec7a3c318c5ff7..c9ccbf29a0ef7f9bd51cb5c3536227df
 \ No newline at end of file
 +}
 diff --git a/WeChatAuto4_X/WeChatAuto/Components/MessageMonitor.open.cs b/WeChatAuto4_X/WeChatAuto/Components/MessageMonitor.open.cs
-index 387c63d783a82c1d82e892fbc31a56f9d890637c..28e4bfb45a94c16d050ea15700172b8182abac9b 100644
+index 387c63d..1125222 100644
 --- a/WeChatAuto4_X/WeChatAuto/Components/MessageMonitor.open.cs
 +++ b/WeChatAuto4_X/WeChatAuto/Components/MessageMonitor.open.cs
 @@ -53,6 +53,7 @@ namespace WeChatAuto.Components
@@ -325,7 +367,8 @@ index 387c63d783a82c1d82e892fbc31a56f9d890637c..28e4bfb45a94c16d050ea15700172b81
 +                return result;
              }
              //如果没有此用户，则取用户wxid
-             var path = "/Group/Custom/Group/Group/Group/Custom/Custom/Custom/Group/Custom/Custom/Group/Group/Group/Group/Group/Group/Group/Group/Group/Group/Button[@Name='聊天信息'][@AutomationId='content_view.top_content_view.title_h_view.right_v_view.right_content_h_view.right_content_v_view.right_ui_.more_button']";
+-            var path = "/Group/Custom/Group/Group/Group/Custom/Custom/Custom/Group/Custom/Custom/Group/Group/Group/Group/Group/Group/Group/Group/Group/Group/Button[@Name='聊天信息'][@AutomationId='content_view.top_content_view.title_h_view.right_v_view.right_content_h_view.right_content_v_view.right_ui_.more_button']";
++            var path = "/Group/Custom/Group/Group/Group/Custom/Custom/Custom/Group/Custom/Custom/Group/Group/Group/Group/Group/Group/Group/Group/Group/Group/Button[@AutomationId='content_view.top_content_view.title_h_view.right_v_view.right_content_h_view.right_content_v_view.right_ui_.more_button']";
              var buttonRetry = Retry.WhileNull(() => this._Client.MainWindow.FindFirstByXPath(path), TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(200));
              if (!buttonRetry.Success)
 -                return;
@@ -350,7 +393,7 @@ index 387c63d783a82c1d82e892fbc31a56f9d890637c..28e4bfb45a94c16d050ea15700172b81
          }
  
          /// <summary>
-@@ -1537,7 +1560,12 @@ namespace WeChatAuto.Components
+@@ -1537,19 +1560,25 @@ namespace WeChatAuto.Components
          internal FriendInfo GetFriendInfoCore(UIA3Automation automation)
          {
              FriendInfo friendInfo = new FriendInfo();
@@ -364,7 +407,23 @@ index 387c63d783a82c1d82e892fbc31a56f9d890637c..28e4bfb45a94c16d050ea15700172b81
              if (!winRetry.Success)
                  return null;
              var win = winRetry.Result.AsWindow();
-@@ -1584,11 +1612,19 @@ namespace WeChatAuto.Components
+-            var path = "/Group/Group/Group/Group/Group/Group/Group/Text[@Name='微信号：'][@AutomationId='right_v_view.user_info_center_view.basic_line_view.basic_line.key_text']";
+-            var textRetry = Retry.WhileNull(() => win.FindFirstByXPath(path), TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(200));
++            var textRetry = Retry.WhileNull(() => win.FindAllDescendants(cf => cf.ByControlType(ControlType.Text)
++                .And(cf.ByAutomationId("right_v_view.user_info_center_view.basic_line_view.basic_line.key_text")))
++                .FirstOrDefault(field => WeChatAction.IsAccountIdLabel(field.Name)), TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(200));
+             if (!textRetry.Success)
+                 return null;
+             //微信号
+             var text = textRetry.Result.GetSibling(1);
+             friendInfo.WxId = text.Name;
+             //名称、昵称、备注
+-            path = "/Group/Group/Group/Group/Group/Group/Text[@AutomationId='right_v_view.nickname_button_view.display_name_text']";
++            var path = "/Group/Group/Group/Group/Group/Group/Text[@AutomationId='right_v_view.nickname_button_view.display_name_text']";
+             text = win.FindFirstByXPath(path);
+             friendInfo.NickName = text.Name;
+             friendInfo.MemoName = text.Name;
+@@ -1584,11 +1613,19 @@ namespace WeChatAuto.Components
              //来源与添加时间略掉，因为没啥意义.
              //标签
              path = "/Group/Group/Group/Group/Group/Group/Group/Group/Group/Group/Group/Group/Group/Group/Button/Group/Group/Text[@AutomationId='content_v_view.ProfileResizeVBoxView.detail_scroll_view.gradient_mask_stacked_view.default_scroll_area.qt_scrollarea_viewport.detail_content_host.detail_center_v_view.detail_derived_content_view.section_shell.main_line_v_view.tag_line.value_normal_view.content_view.value_reader_view.value_reader_'][@ClassName='mmui::ProfileTextView']";
@@ -386,7 +445,7 @@ index 387c63d783a82c1d82e892fbc31a56f9d890637c..28e4bfb45a94c16d050ea15700172b81
              path = "/Group/Group/Group/Group/Group/Button[@AutomationId='head_image_v_view.head_view_'][@ClassName='mmui::ContactHeadView']";
              var button = win.FindFirstByXPath(path);
 diff --git a/WeChatAuto4_X/WeChatAuto/Components/MessageMonitor.pull.cs b/WeChatAuto4_X/WeChatAuto/Components/MessageMonitor.pull.cs
-index 60e0fa4ca4df379f6b57233195c343d8016b8e7f..17f84e8d0592978d72b341b48a76af2fb8d09197 100644
+index 60e0fa4..17f84e8 100644
 --- a/WeChatAuto4_X/WeChatAuto/Components/MessageMonitor.pull.cs
 +++ b/WeChatAuto4_X/WeChatAuto/Components/MessageMonitor.pull.cs
 @@ -1,4 +1,4 @@
@@ -481,7 +540,7 @@ index 60e0fa4ca4df379f6b57233195c343d8016b8e7f..17f84e8d0592978d72b341b48a76af2f
          {
              if (element.ClassName.Equals("mmui::ChatItemView") || element.ClassName.Equals("mmui::ChatSystemInfoItemView") || element.ClassName.equals("mmui::ChatFolderItemView"))
 diff --git a/WeChatAuto4_X/WeChatAuto/Components/WeChatClientFactory.cs b/WeChatAuto4_X/WeChatAuto/Components/WeChatClientFactory.cs
-index 339e0ac3e1acc01296c936f935e7ddd3ce09575f..ea6798165a7ea680c4e7f11eed02e64437bb758a 100644
+index 339e0ac..62f9c68 100644
 --- a/WeChatAuto4_X/WeChatAuto/Components/WeChatClientFactory.cs
 +++ b/WeChatAuto4_X/WeChatAuto/Components/WeChatClientFactory.cs
 @@ -128,6 +128,20 @@ namespace WeChatAuto.Components
@@ -521,15 +580,23 @@ index 339e0ac3e1acc01296c936f935e7ddd3ce09575f..ea6798165a7ea680c4e7f11eed02e644
                                       timeout: TimeSpan.FromSeconds(5),
                                       interval: TimeSpan.FromMilliseconds(200));
                  if (windowRetry.Success)
-@@ -475,6 +494,7 @@ namespace WeChatAuto.Components
+@@ -475,29 +494,39 @@ namespace WeChatAuto.Components
                      var wxTempwindow = windowRetry.Result.AsWindow();
                      RandomWait.Wait(300, 600);
                      OwerInfo info = new OwerInfo();
 +                    SupperMouseKey.CheckDesktopInput();
                      wxTempwindow.Focus();
                      RandomWait.Wait(300, 600);
-                     var toolBar = wxTempwindow.FindFirstDescendant(cf => cf.ByAutomationId("MainView.main_tabbar").And(cf.ByName("导航")).And(cf.ByControlType(ControlType.ToolBar)));
-@@ -482,11 +502,13 @@ namespace WeChatAuto.Components
+-                    var toolBar = wxTempwindow.FindFirstDescendant(cf => cf.ByAutomationId("MainView.main_tabbar").And(cf.ByName("导航")).And(cf.ByControlType(ControlType.ToolBar)));
+-                    var button = toolBar.FindFirstChild(cf => cf.ByName("微信").And(cf.ByClassName("mmui::XTabBarItem")).And(cf.ByControlType(ControlType.Button)));
++                    var toolBar = wxTempwindow.FindFirstDescendant(cf => cf.ByControlType(ControlType.ToolBar)
++                        .And(cf.ByAutomationId("MainView.main_tabbar").Or(cf.ByName("导航"))
++                            .Or(cf.ByName("導覽")).Or(cf.ByName("Navigation"))));
++                    var button = toolBar?.FindFirstChild(cf => cf.ByControlType(ControlType.Button)
++                        .And(cf.ByClassName("mmui::XTabBarItem"))
++                        .And(cf.ByName("微信").Or(cf.ByName("WeChat")).Or(cf.ByName("Chats")).Or(cf.ByName("聊天"))));
++                    if (button == null)
++                        throw new InvalidOperationException("WeChat chat tab not found.");
                      var point1 = button.GetClickablePoint();
                      var topInterval = (int)(WeAutomation.Config.AvatorToWeixinButtonOffsetY * DpiHelper.GetScaleForWindow(wxTempwindow.Properties.NativeWindowHandle));
                      var point2 = new Point(point1.X, point1.Y - topInterval);
@@ -543,11 +610,28 @@ index 339e0ac3e1acc01296c936f935e7ddd3ce09575f..ea6798165a7ea680c4e7f11eed02e644
 +                    var windowResult = Retry.WhileNull(() => WeChatAction.ListWindows(processID)
 +                        .Where(window => window.Visible && window.Hwnd != mainHandle)
 +                        .Select(window => automation.FromHandle(window.Hwnd))
-+                        .FirstOrDefault(window => window?.Properties.Name.ValueOrDefault == "Weixin"),
++                        .Where(window => WeChatAction.IsClientWindowTitle(window?.Properties.Name.ValueOrDefault))
++                        .Select(window => window.FindFirstDescendant(cf => cf.ByAutomationId("head_image_v_view.head_view_")
++                            .And(cf.ByControlType(ControlType.Button)).And(cf.ByProcessId(processID))))
++                        .FirstOrDefault(avatar => avatar != null),
                          timeout: TimeSpan.FromSeconds(2), interval: TimeSpan.FromMilliseconds(200));
                      if (windowResult.Success)
                      {
-@@ -574,4 +596,4 @@ namespace WeChatAuto.Components
+-                        var window = windowResult.Result.AsWindow();
+-                        window.DrawHighlightExt();
+-                        button = window.FindFirstDescendant(cf => cf.ByAutomationId("head_image_v_view.head_view_").And(cf.ByControlType(ControlType.Button))
+-                            .And(cf.ByProcessId(wxTempwindow.Properties.ProcessId)));
++                        button = windowResult.Result;
+                         button?.DrawHighlightExt();
+                         if (button != null)
+                         {
+-                            var wxid = button.GetParent().GetParent().FindFirstDescendant(cf => cf.ByName("微信号：").And(cf.ByControlType(ControlType.Text)));
++                            var wxid = button.GetParent().GetParent().FindAllDescendants(cf => cf.ByControlType(ControlType.Text))
++                                .FirstOrDefault(field => WeChatAction.IsAccountIdLabel(field.Name));
+                             if (wxid != null)
+                             {
+                                 wxid.DrawHighlightExt();
+@@ -574,4 +603,4 @@ namespace WeChatAuto.Components
              }
          }
      }
@@ -555,7 +639,7 @@ index 339e0ac3e1acc01296c936f935e7ddd3ce09575f..ea6798165a7ea680c4e7f11eed02e644
 \ No newline at end of file
 +}
 diff --git a/WeChatAuto4_X/WeChatAuto/Options/MessageMonitorOptions.cs b/WeChatAuto4_X/WeChatAuto/Options/MessageMonitorOptions.cs
-index b5b819c02a135fb583e29aa20566c0cd0fe147a6..7c06768b41ed70295fd1e54e559b2517055126a7 100644
+index b5b819c..7c06768 100644
 --- a/WeChatAuto4_X/WeChatAuto/Options/MessageMonitorOptions.cs
 +++ b/WeChatAuto4_X/WeChatAuto/Options/MessageMonitorOptions.cs
 @@ -18,6 +18,11 @@ namespace WeChatAuto.Options
@@ -571,7 +655,7 @@ index b5b819c02a135fb583e29aa20566c0cd0fe147a6..7c06768b41ed70295fd1e54e559b2517
          /// 如果此好友在缓存中不存在，是否获取此好友的用户信息(包括wxid),并更新缓存，对于基于wxid的企业级开发很有用
          /// </summary>
 diff --git a/WeChatAuto4_X/WeChatAuto/Options/PullMessagesOptions.cs b/WeChatAuto4_X/WeChatAuto/Options/PullMessagesOptions.cs
-index 92e516b433ad8ba6f521e79e9ac51b18c55759c8..4eefe920655a2b8d23b9aceb683e3d2433d1891b 100644
+index 92e516b..4eefe92 100644
 --- a/WeChatAuto4_X/WeChatAuto/Options/PullMessagesOptions.cs
 +++ b/WeChatAuto4_X/WeChatAuto/Options/PullMessagesOptions.cs
 @@ -1,4 +1,4 @@
@@ -591,7 +675,7 @@ index 92e516b433ad8ba6f521e79e9ac51b18c55759c8..4eefe920655a2b8d23b9aceb683e3d24
          /// 使用历史缓存列表补足 - 为了加快历史消息的获取速度，默认为True,系统检查到新抓取的数据根据LCS/Diff Block算法与历史消息序列一致，则停止向上滚动获取消息，改由从缓存历史消息中获取数据，也可以设置为False,则每次都会向上滚动抓取固定（用户设置）数量的消息
          /// </summary>
 diff --git a/WeChatAuto4_X/WeChatAuto/Services/WeAutomation.cs b/WeChatAuto4_X/WeChatAuto/Services/WeAutomation.cs
-index c9c812575743229f6c460e4072ec6eaf6ebab3d0..37c278a16a34a37885188472b0bc7dd059f3bacc 100644
+index c9c8125..37c278a 100644
 --- a/WeChatAuto4_X/WeChatAuto/Services/WeAutomation.cs
 +++ b/WeChatAuto4_X/WeChatAuto/Services/WeAutomation.cs
 @@ -1,4 +1,4 @@
@@ -624,7 +708,7 @@ index c9c812575743229f6c460e4072ec6eaf6ebab3d0..37c278a16a34a37885188472b0bc7dd0
              RegisterServices(services);
  
 diff --git a/WeChatAuto4_X/WeChatAuto/Utils/MouseScrollHelper.cs b/WeChatAuto4_X/WeChatAuto/Utils/MouseScrollHelper.cs
-index 4cebfa8ea32cf2528a346738d5da27c007a5c0d4..ca7cdd8c8d4d6f3152a9d2cf024333e1f5f85ddd 100644
+index 4cebfa8..ca7cdd8 100644
 --- a/WeChatAuto4_X/WeChatAuto/Utils/MouseScrollHelper.cs
 +++ b/WeChatAuto4_X/WeChatAuto/Utils/MouseScrollHelper.cs
 @@ -23,6 +23,7 @@ namespace WeChatAuto.Utils
@@ -651,7 +735,7 @@ index 4cebfa8ea32cf2528a346738d5da27c007a5c0d4..ca7cdd8c8d4d6f3152a9d2cf024333e1
 \ No newline at end of file
 +}
 diff --git a/WeChatAuto4_X/WeChatAuto/Utils/SupperMouseKey.cs b/WeChatAuto4_X/WeChatAuto/Utils/SupperMouseKey.cs
-index bc294fbe85cdb4b2813f7d29326b5a537c0bda92..cb49fe1102c5fa63ab4680943068876c0c89868f 100644
+index bc294fb..cb49fe1 100644
 --- a/WeChatAuto4_X/WeChatAuto/Utils/SupperMouseKey.cs
 +++ b/WeChatAuto4_X/WeChatAuto/Utils/SupperMouseKey.cs
 @@ -22,6 +22,14 @@ namespace WeChatAuto.Utils
@@ -776,6 +860,54 @@ index bc294fbe85cdb4b2813f7d29326b5a537c0bda92..cb49fe1102c5fa63ab4680943068876c
 @@ -325,4 +346,4 @@ namespace WeChatAuto.Utils
              keybd_event((byte)key, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
          }
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/WeChatAuto4_X/WeChatAuto/Utils/WeChatAction.cs b/WeChatAuto4_X/WeChatAuto/Utils/WeChatAction.cs
+index 18037ed..bfa3772 100644
+--- a/WeChatAuto4_X/WeChatAuto/Utils/WeChatAction.cs
++++ b/WeChatAuto4_X/WeChatAuto/Utils/WeChatAction.cs
+@@ -274,7 +274,7 @@ namespace WeChatAuto.Utils
+         }
+ 
+         /// <summary>
+-        /// 找真正主窗：Qt51514QWindowIcon + 标题「微信」。
++        /// 按 Qt 窗口结构和标题查找微信主窗。
+         /// 关窗后 Vis=False 仍在；绝不要选 WxTrayIconMessageWindow。
+         /// </summary>
+         public static IntPtr FindMainHwnd(int pid)
+@@ -283,7 +283,7 @@ namespace WeChatAuto.Utils
+ 
+             var main = wins.FirstOrDefault(w =>
+                 w.Class.IndexOf("QWindowIcon", StringComparison.OrdinalIgnoreCase) >= 0
+-                && w.Title == "微信"
++                && IsClientWindowTitle(w.Title)
+                 && w.Class.IndexOf("WxTrayIcon", StringComparison.OrdinalIgnoreCase) < 0);
+ 
+             if (main.Hwnd != IntPtr.Zero) return main.Hwnd;
+@@ -295,6 +295,18 @@ namespace WeChatAuto.Utils
+             return main.Hwnd;
+         }
+ 
++        internal static bool IsClientWindowTitle(string title) =>
++            string.Equals(title, "微信", StringComparison.Ordinal)
++            || string.Equals(title, "Weixin", StringComparison.OrdinalIgnoreCase)
++            || string.Equals(title, "WeChat", StringComparison.OrdinalIgnoreCase);
++
++        internal static bool IsAccountIdLabel(string text)
++        {
++            var label = text?.Trim().TrimEnd(':', '：').Trim();
++            return label == "微信号" || label == "微信號"
++                || string.Equals(label, "WeChat ID", StringComparison.OrdinalIgnoreCase);
++        }
++
+         /// <summary>找托盘消息窗（调试用；不要 Close 它）。</summary>
+         public static IntPtr FindTrayMsgHwnd(int pid)
+         {
+@@ -660,4 +672,4 @@ namespace WeChatAuto.Utils
+ 
+         #endregion
      }
 -}
 \ No newline at end of file

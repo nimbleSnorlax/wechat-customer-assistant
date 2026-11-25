@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 HERE = Path(__file__).resolve().parent
 APP_ICON = HERE / "WeChatAssistant.ico"
 sys.path.insert(0, str(ROOT))
-from release_update import FILES, REPOSITORY_PATTERN, installed_version, version
+from release_update import BRIDGE_MARKER, BRIDGE_VERSION, FILES, REPOSITORY_PATTERN, installed_version, version
 
 PYTHON_PACKAGE = "python-3.13.17-embed-amd64.zip"
 PYTHON_URL = "https://www.python.org/ftp/python/3.13.17/" + PYTHON_PACKAGE
@@ -159,6 +159,7 @@ def build(repository, output, release_version=None, reader_source=None):
                     archive.write(path, path.relative_to(ROOT).as_posix())
             for name in ("x64", "runtimes/win", "runtimes/win-x64"):
                 add_tree(archive, bridge / name)
+            archive.writestr(".run/sdk/" + BRIDGE_MARKER, BRIDGE_VERSION + "\n")
         compile_cs("Setup.cs", output, "/r:Microsoft.CSharp.dll", "/r:System.IO.Compression.dll",
                    "/r:System.IO.Compression.FileSystem.dll", f"/resource:{payload},WorkbenchPayload")
     print(output)

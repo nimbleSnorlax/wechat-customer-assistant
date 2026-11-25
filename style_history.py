@@ -10,7 +10,6 @@ from contextlib import closing, contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from wechat_cli.core.contacts import get_self_username
 from wechat_cli.core.context import AppContext
 from wechat_cli.core.messages import (
     MSG_TYPE_FILTERS,
@@ -86,20 +85,51 @@ class ContactDirectoryError(ValueError):
 
 
 @contextmanager
-def contact_directory(config_path, profile):
-    app = AppContext(config_path)
-    if not profile or get_self_username(app.db_dir, app.cache, app.decrypted_dir) != profile:
-        raise ContactDirectoryError("本机只读资料与当前微信账号不一致。")
+def contact_snapshot(app):
     path = app.cache.get("contact/contact.db")
     if not path:
-        raise ContactDirectoryError("暂时无法读取本机微信通讯录。")
+        path = Path(app.decrypted_dir) / "contact" / "contact.db"
+        if not path.is_file():
+            raise ContactDirectoryError("暂时无法读取本机微信通讯录。")
     snapshot = Path(path).resolve().as_uri() + "?mode=ro"
     with closing(sqlite3.connect(snapshot, uri=True, timeout=3)) as connection:
-        owner_row = connection.execute("SELECT alias FROM contact WHERE username=?", (profile,)).fetchone()
-        owner = (owner_row[0] or profile) if owner_row else ""
-        if not WECHAT_ALIAS.fullmatch(owner):
+        yield connection
+
+
+def source_identity(app, connection):
+    directory = Path(app.db_dir)
+    if directory.name.casefold() != "db_storage":
+        raise ContactDirectoryError("请选择对应微信账号的本机 db_storage 资料。")
+    folder = directory.parent.name
+    stem = re.sub(r"_(?:[a-z0-9]{4}|[0-9a-f]{5,})$", "", folder, flags=re.I)
+    rows = connection.execute(
+        "SELECT username, alias, nick_name FROM contact WHERE username COLLATE NOCASE IN (?, ?)", (folder, stem)
+    ).fetchall()
+    if len(rows) != 1 or not rows[0][0]:
+        raise ContactDirectoryError("无法核对本机资料所属的微信账号。")
+    profile, alias, name = rows[0]
+    return {"profile": profile, "alias": alias or profile, "name": name or profile,
+            "historyAvailable": bool(app.msg_db_keys)}
+
+
+def read_source_identity(app, expected_owner=None):
+    with contact_snapshot(app) as connection:
+        source = source_identity(app, connection)
+    if expected_owner is not None and source["profile"] != expected_owner:
+        raise ContactDirectoryError("本机只读资料与当前微信账号不一致。")
+    return source
+
+
+@contextmanager
+def contact_directory(config_path, profile):
+    app = AppContext(config_path)
+    with contact_snapshot(app) as connection:
+        source = source_identity(app, connection)
+        if not profile or source["profile"] != profile:
+            raise ContactDirectoryError("本机只读资料与当前微信账号不一致。")
+        if not WECHAT_ALIAS.fullmatch(source["alias"]):
             raise ContactDirectoryError("无法核对本机资料所属的微信账号。")
-        yield connection, owner
+        yield connection, source["alias"]
 
 
 def directory_contacts(connection, profile, owner):
@@ -200,11 +230,9 @@ def mask_history_text(text):
     return text.strip()
 
 
-def own_replies(config_path, chats, days):
+def own_replies(config_path, chats, days, expected_owner=None):
     app = AppContext(config_path)
-    owner = get_self_username(app.db_dir, app.cache, app.decrypted_dir)
-    if not owner:
-        return {"error": "暂时无法确认资料所属的微信账号，请检查本机历史查询设置。"}
+    owner = read_source_identity(app, expected_owner)["profile"]
 
     start_ts = int((datetime.now() - timedelta(days=days)).timestamp())
     filters, parameters = _build_message_filters(start_ts=start_ts, msg_type_filter=MSG_TYPE_FILTERS["text"])
@@ -279,9 +307,7 @@ def recent_reply_turns(connection, table, senders, owner, chat, limit):
 
 def latest_incoming_text(config_path, chats, expected_owner, context_chats=(), context_limit=DEFAULT_REPLY_CONTEXT):
     app = AppContext(config_path)
-    owner = get_self_username(app.db_dir, app.cache, app.decrypted_dir)
-    if not owner or owner != expected_owner:
-        return {"error": "后台接收无法确认本机微信账号。"}
+    owner = read_source_identity(app, expected_owner)["profile"]
     result = {}
     context_chats = set(context_chats)
     if type(context_limit) is not int or not MIN_REPLY_CONTEXT <= context_limit <= REPLY_CONTEXT_LIMIT:
@@ -337,9 +363,7 @@ def latest_incoming_text(config_path, chats, expected_owner, context_chats=(), c
 
 def history_page(config_path, selection):
     app = AppContext(config_path)
-    owner = get_self_username(app.db_dir, app.cache, app.decrypted_dir)
-    if not owner or owner != selection["owner"]:
-        return {"error": "无法确认当前历史资料所属的微信账号。"}
+    owner = read_source_identity(app, selection["owner"])["profile"]
     source_order = sorted(app.msg_db_keys)
     cursor = selection.get("cursor") or {}
     index = cursor.get("source", 0)
@@ -395,7 +419,12 @@ def history_page(config_path, selection):
 if __name__ == "__main__":
     try:
         selection = json.loads(sys.stdin.read().lstrip("\ufeff"))
-        if selection.get("mode") == "background":
+        config = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+        if not isinstance(config, dict) or not isinstance(config.get("db_dir"), str) or not config["db_dir"].strip():
+            raise ContactDirectoryError("请先配置当前微信账号的本机只读资料。")
+        if selection.get("mode") == "source":
+            result = read_source_identity(AppContext(sys.argv[1]))
+        elif selection.get("mode") == "background":
             result = latest_incoming_text(sys.argv[1], selection["chats"], selection["owner"],
                                           selection.get("contextChats", []), selection.get("contextLimit", DEFAULT_REPLY_CONTEXT))
         elif selection.get("mode") == "learning":
@@ -405,7 +434,9 @@ if __name__ == "__main__":
         elif selection.get("mode") == "contacts":
             result = search_contact_directory(sys.argv[1], selection["owner"], selection["query"])
         else:
-            result = own_replies(sys.argv[1], selection["chats"], selection["days"])
+            result = own_replies(sys.argv[1], selection["chats"], selection["days"], selection.get("owner"))
+    except ContactDirectoryError as error:
+        result = {"error": str(error)}
     except Exception:
         result = {"error": "本机历史资料暂不可读，请检查微信查询工具和账号配置。"}
     print(json.dumps(result, ensure_ascii=False))

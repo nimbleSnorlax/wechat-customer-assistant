@@ -66,6 +66,8 @@ MAX_TEXT = 800_000
 TEXT_TYPES = {".txt", ".md", ".csv"}
 MAX_DOCS = 40
 CLI_LOCK = threading.Lock()
+HISTORY_SOURCE_LOCK = threading.Lock()
+HISTORY_SOURCE_CACHE = (None, 0.0, {})
 STATUS_LOCK = threading.Lock()
 STATUS_CACHE = (0.0, {})
 SDK_ACCOUNT_NAME = ""
@@ -459,7 +461,7 @@ def public_wechat_tags(catalog):
 
 
 def background_source_error():
-    if not CLI.is_file() or not CLI_CONFIG.is_file() or not CLI_PYTHON.is_file() or not history_profile():
+    if not CLI.is_file() or not history_source().get("historyAvailable"):
         return "后台接收需要已配置的本机只读查询工具。"
     return ""
 
@@ -730,12 +732,12 @@ def run_sdk_directory(arguments, timeout):
     raise AppError("暂时无法读取微信通讯录。请保持一个已登录的电脑版微信打开，并重试。", 503)
 
 
-def read_local_directory(profile, mode, failure, **filters):
+def read_local_directory(profile, mode, failure, *, timeout=30, **filters):
     command = [str(CLI_PYTHON), str(ROOT / "style_history.py"), str(CLI_CONFIG)]
     selection = json.dumps({"mode": mode, "owner": profile, **filters})
     try:
         with CLI_LOCK:
-            result = run_local(command, 30, selection)
+            result = run_local(command, timeout, selection)
         payload = json.loads(result.stdout) if result.returncode == 0 else None
     except (OSError, ValueError, subprocess.TimeoutExpired):
         payload = None
@@ -770,14 +772,29 @@ def sync_wechat_tags():
     return public_wechat_tags(catalog)
 
 
-def history_profile():
+def history_source():
+    global HISTORY_SOURCE_CACHE
+    if not CLI_PYTHON.is_file():
+        return {}
     try:
-        account_dir = Path(json.loads(CLI_CONFIG.read_text(encoding="utf-8-sig"))["db_dir"])
-        if account_dir.name == "db_storage":
-            return re.sub(r"_[a-z0-9]{4}$", "", account_dir.parent.name, flags=re.I)
-    except (OSError, ValueError, KeyError, TypeError):
-        pass
-    return ""
+        stat = CLI_CONFIG.stat()
+    except OSError:
+        return {}
+    key = (CLI_CONFIG, stat.st_ino, stat.st_mtime_ns, stat.st_size)
+    with HISTORY_SOURCE_LOCK:
+        cached, expires, source = HISTORY_SOURCE_CACHE
+        if key == cached and time.monotonic() < expires:
+            return source
+        try:
+            source = read_local_directory(None, "source", "无法核对本机微信资料。", timeout=8)
+        except AppError:
+            source = {}
+        HISTORY_SOURCE_CACHE = (key, time.monotonic() + (60 if source else 8), source)
+        return source
+
+
+def history_profile():
+    return history_source().get("profile", "")
 
 
 def read_account(force=False):
@@ -794,21 +811,17 @@ def read_account(force=False):
                 window_count = sdk_response((), 9).get("windows", 0)
             except (OSError, ValueError, subprocess.TimeoutExpired):
                 pass
-        profile = history_profile()
+        local_source = history_source()
+        profile = local_source.get("profile", "")
         if window_count == 1 and profile:
-            try:
-                owner = wechat_cli("contacts", "--format", "json", "--detail=" + profile)
-                if owner.get("username") == profile:
-                    names = [owner.get("nick_name") or profile]
-                    source = "client"
-            except (AppError, AttributeError):
-                pass
+            names = [local_source["name"]]
+            source = "client"
         if window_count != 1:
             SDK_ACCOUNT_NAME = ""
         elif SDK_ACCOUNT_NAME:
             names, source = [SDK_ACCOUNT_NAME], "sdk"
         result = {"source": source, "accounts": names, "profile": profile, "windows": window_count,
-                  "historyAvailable": CLI.is_file() and CLI_CONFIG.is_file()}
+                  "historyAvailable": CLI.is_file() and bool(local_source.get("historyAvailable"))}
         STATUS_CACHE = (time.monotonic(), result)
         return result
 
@@ -1817,11 +1830,39 @@ def finish_reply_plan(value):
     return {"ok": True}
 
 
+def prepare_managed_bridge(stop):
+    global SDK
+    bundled = APP_HOME / ".run" / "sdk"
+    if (not MANAGED_UPDATE or ROOT == APP_HOME or SDK.resolve() != (bundled / "WeChatBridge.dll").resolve()
+            or release_update.bridge_ready(bundled)):
+        return True
+    repository = release_update.configured_repository(APP_HOME)
+    if not repository or not SDK.is_file():
+        return True
+    destination = release_update.update_dir(APP_HOME) / "bridges" / release_update.BRIDGE_VERSION
+    SDK = destination / "WeChatBridge.dll"
+    while not stop.is_set():
+        try:
+            release_update.install_bridge(repository, bundled, destination)
+        except (OSError, release_update.UpdateError) as error:
+            print(f"WeChat component: {error}", file=sys.stderr)
+            settings = read_settings()
+            for kind in ("reply", "group"):
+                if settings[kind]["enabled"]:
+                    report_automation_status({"kind": kind, "state": "component_missing"})
+            stop.wait(30)
+        else:
+            return True
+    return False
+
+
 def monitor_group_worker(stop, port):
     global SDK_CHILD
     child = None
     restart_after = 0.0
     try:
+        if not prepare_managed_bridge(stop):
+            return
         while not stop.wait(3):
             if child is not None and child.poll() is None:
                 continue
@@ -1894,7 +1935,7 @@ def history_learning_settings():
         "baseTone": config["tone"],
         "mimicTone": config["mimicTone"],
         "ready": bool(config["mode"] == "model" and config["model"] and config["baseUrl"]),
-        "historyAvailable": CLI_PYTHON.is_file() and CLI_CONFIG.is_file() and bool(owner),
+        "historyAvailable": bool(history_source().get("historyAvailable")),
         "canRestore": bool(backup),
         "job": job,
     }
@@ -2231,7 +2272,7 @@ def start_history_learning():
     owner = history_profile()
     if config["mode"] != "model" or not config["baseUrl"] or not config["model"]:
         raise AppError("请先在回复设置中保存并启用 AI 模式。")
-    if not owner or not CLI_PYTHON.is_file() or not CLI_CONFIG.is_file():
+    if not owner or not history_source().get("historyAvailable"):
         raise AppError("请先配置当前微信账号的本机历史读取。")
     with HISTORY_LEARNING_LOCK:
         if HISTORY_LEARNING["state"] == "running":
@@ -2248,12 +2289,13 @@ def start_history_learning():
 
 
 def read_style_samples(chats, days):
-    if not CLI_PYTHON.is_file() or not CLI_CONFIG.is_file():
-        raise AppError("本机历史查询工具的 Python 环境或账号配置不可用。", 503)
+    source = history_source()
+    if not source.get("historyAvailable"):
+        raise AppError("本机历史查询工具或当前微信的账号资料不可用。", 503)
     command = [str(CLI_PYTHON), str(ROOT / "style_history.py"), str(CLI_CONFIG)]
     try:
         with CLI_LOCK:
-            result = run_local(command, 120, json.dumps({"chats": chats, "days": days}))
+            result = run_local(command, 120, json.dumps({"owner": source["profile"], "chats": chats, "days": days}))
         if result.returncode:
             raise ValueError("Reply history worker did not finish")
         data = json.loads(result.stdout)
@@ -2564,7 +2606,12 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/operation-records":
                 return self.reply(operation_records(param("kind", "reply"), param("before")))
             if path == "/api/style-sessions":
+                source = history_source()
+                if not source.get("historyAvailable"):
+                    raise AppError("请先配置当前微信账号的本机历史读取。", 409)
                 payload = wechat_cli("sessions", "--limit", 80, "--format", "json")
+                if history_profile() != source["profile"]:
+                    raise AppError("读取时微信资料账号已更换，请重新读取。", 409)
                 return self.reply([{"id": row["username"], "name": row["chat"], "group": row["is_group"]}
                                    for row in payload if isinstance(row, dict) and row.get("username")])
             if path == "/api/contacts":

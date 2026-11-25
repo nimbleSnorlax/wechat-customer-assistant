@@ -1,1 +1,2 @@
 *.patch -text
+patches/WeChatAuto.SDK.patch whitespace=-blank-at-eol,-space-before-tab
