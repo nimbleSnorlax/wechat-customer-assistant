@@ -1,0 +1,2347 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>微信客服助手</title>
+<style>
+:root {
+  --canvas:#f1f3f7; --panel:#fff; --surface:#f7f9fc; --ink:#273347; --muted:#526078;
+  --line:#dbe2ec; --accent:#225aa4; --accent-hover:#184683; --accent-text:#fff;
+  --tint:#e9f2ff; --danger:#a32c2c; --focus:#2766b4; --success:#237954;
+  --version-current-marker:#77d7a2; --update-marker:#ffd15c;
+  --side-bg:#263445; --side-ink:#dce7f5; --side-title:#f3f7fc; --side-hover:#303f53;
+  --side-active:#1b293a; --side-current:#a6d0ff; --side-line:#435165;
+  --drawer-shade:#17243480; --shadow:0 .35rem 1.15rem #20324b25;
+  --space-1:.25rem; --space-2:.5rem; --space-3:.75rem; --space-4:1rem; --space-5:1.5rem;
+  --space-6:2rem; --space-7:3rem; --radius-1:.25rem; --radius-2:.35rem; --radius-3:.5rem;
+  --body:.875rem; --small:.8125rem; --tap:2.75rem; --sidebar-width:13rem; --sidebar-compact:3.75rem;
+  font-family:"Microsoft YaHei UI","PingFang SC","Noto Sans CJK SC",system-ui,sans-serif;
+  color-scheme:light dark;
+}
+@media(prefers-color-scheme:dark) {
+  :root {
+    --canvas:#141c27; --panel:#1d2836; --surface:#243246; --ink:#edf3fb; --muted:#aebdd0;
+    --line:#3b4b60; --accent:#a3cdff; --accent-hover:#c2deff; --accent-text:#142c47;
+    --tint:#2a405c; --danger:#ffb8b5; --focus:#9dcaff; --success:#89dbb3;
+    --side-bg:#202e3e; --side-active:#142031; --side-line:#425269;
+    --drawer-shade:#080e17a0; --shadow:0 .35rem 1.15rem #080e17a0;
+  }
+}
+*,*::before,*::after { box-sizing:border-box }
+[hidden] { display:none !important }
+body { margin:0; background:var(--canvas); color:var(--ink); font-size:var(--body); line-height:1.65 }
+button,input,textarea { font:inherit }
+button { cursor:pointer }
+button:disabled { cursor:wait; opacity:.72 }
+:focus-visible { outline:.15rem solid var(--focus); outline-offset:.15rem }
+h2,h3,p { margin:0 }
+h2,h3 { line-height:1.25 }
+h2 { font-size:1.125rem; font-weight:650 }
+h3 { font-size:1.06rem }
+small,.small { font-size:var(--small); color:var(--muted) }
+.muted { color:var(--muted) }
+.shell { min-height:100vh }
+.workspace-shell { min-width:0 }
+.workspace-shell[data-current-view="setup"] { min-block-size:100dvh; display:flex; flex-direction:column }
+.workspace-shell[data-current-view="setup"] .workspace-header { flex:none }
+.sidebar { display:none; position:fixed; inset-block:0; inset-inline-start:0; z-index:30;
+  width:min(var(--sidebar-width),calc(100vw - var(--tap))); background:var(--side-bg); color:var(--side-ink);
+  overflow:auto; color-scheme:dark }
+.shell[data-mobile-menu="open"] .sidebar { display:block }
+.drawer-shade { position:fixed; inset:0; z-index:29; border:0; background:var(--drawer-shade) }
+.brand { display:flex; align-items:center; min-height:3.25rem; padding:var(--space-2); gap:var(--space-1);
+  color:var(--side-title); background:var(--side-active); font-weight:750; line-height:1.25 }
+.brand-identity { display:flex; align-items:stretch; min-width:0; gap:var(--space-2) }
+.brand-copy { display:grid; justify-items:start; min-width:0 }
+.brand-icon { flex:none; display:grid; place-items:center; width:2.375rem; min-height:1.75rem }
+.brand-icon img { display:block; width:100%; height:auto }
+.sidebar-close { margin-inline-start:auto; min-height:var(--tap); min-width:var(--tap); border:0;
+  background:transparent; color:var(--side-title); font-size:1.25rem }
+.sidebar-close:hover { background:var(--side-hover) }
+.nav { display:grid; gap:var(--space-1); padding-block:var(--space-2) }
+.nav button { background:transparent; color:var(--side-ink); border:0; display:flex; align-items:center;
+  gap:var(--space-3); text-align:start; padding:var(--space-2) var(--space-4); min-height:var(--tap) }
+.nav button:hover { color:var(--side-title); background:var(--side-hover) }
+.nav button[aria-current="page"] { color:var(--side-current); background:var(--side-active); font-weight:700 }
+.nav button:focus-visible,.sidebar-close:focus-visible { outline-color:var(--side-current); outline-offset:-.2rem }
+.nav-icon { display:block; position:relative; width:1.1rem; height:1.1rem; flex:none }
+.nav-icon::before,.nav-icon::after { position:absolute; content:""; display:block }
+.menu-home::before { inset:.17rem .22rem auto; height:.65rem; border-block-start:1px solid; border-inline-start:1px solid; transform:rotate(45deg) }
+.menu-home::after { inset:.46rem .18rem .08rem; border:1px solid; border-block-start:0; border-radius:0 0 var(--radius-1) var(--radius-1) }
+.menu-chat::before { inset:.12rem .04rem .25rem; border:1px solid; border-radius:.23rem }
+.menu-chat::after { inset:.77rem auto auto .28rem; width:.32rem; height:.24rem; border-inline-start:1px solid; transform:skewY(-32deg) }
+.menu-reply::before { inset:.11rem .22rem; border:1px solid; border-radius:.1rem }
+.menu-reply::after { inset:.35rem .39rem auto; height:1px; background:currentColor; box-shadow:0 .19rem currentColor,0 .38rem currentColor }
+.menu-ai::before { inset:.17rem; border:1px solid; border-radius:.18rem }
+.menu-ai::after { inset:.42rem; border:1px solid; border-radius:50% }
+.menu-group::before { inset:.11rem auto auto .34rem; width:.44rem; height:.44rem; border:1px solid; border-radius:50% }
+.menu-group::after { inset:.62rem .13rem .08rem; border:1px solid; border-radius:.36rem .36rem .15rem .15rem }
+.menu-book::before { inset:.12rem .1rem .13rem; border:1px solid; border-radius:.12rem }
+.menu-book::after { inset:.19rem auto .19rem 50%; border-inline-start:1px solid }
+.workspace-header { background:var(--panel); position:sticky; inset-block-start:0; z-index:10; border-block-end:1px solid var(--line) }
+.topbar { display:flex; align-items:center; flex-wrap:wrap; min-height:3.25rem; min-width:0 }
+.automation-indicators { order:1; flex:1 0 100%; display:flex; flex-wrap:wrap; gap:var(--space-2);
+  min-width:0; padding:var(--space-1) var(--space-3); border-block-start:1px solid var(--line) }
+.automation-indicator { display:inline-flex; align-items:center; gap:var(--space-1); min-height:1.6rem;
+  padding:0 var(--space-2); color:var(--ink); background:var(--surface); border:1px solid var(--line);
+  border-radius:var(--radius-2); font-size:var(--small); overflow-wrap:anywhere }
+.automation-indicator::before { content:""; width:.4rem; height:.4rem; border-radius:50%; background:var(--muted); flex:none }
+.automation-indicator b { color:var(--muted); font-weight:650 }
+.automation-indicator[data-state="running"]::before { background:var(--success) }
+.automation-indicator[data-state="running"] b { color:var(--success) }
+.automation-indicator[data-state="background"]::before { background:var(--success) }
+.automation-indicator[data-state="background"] b { color:var(--success) }
+.automation-indicator[data-state="error"] b { color:var(--danger) }
+.automation-toggle { flex:none; margin-inline:var(--space-1) }
+.version-control { display:inline-flex; align-items:center; gap:var(--space-1); min-height:1.5rem;
+  margin-inline-start:calc(-1 * var(--space-1)); padding-inline:var(--space-1); border:0; border-radius:var(--radius-1);
+  background:transparent; color:var(--side-ink); font-size:var(--small); font-weight:500; white-space:nowrap }
+.version-control:hover { background:var(--side-hover); color:var(--side-title) }
+.version-control:focus-visible { outline-color:var(--side-current); outline-offset:-.125rem }
+.version-dot { flex:none; width:.5rem; height:.5rem; border-radius:50%; background:var(--side-ink) }
+.version-control:is([data-update-status="current"],[data-update-status="local"]) .version-dot { background:var(--version-current-marker) }
+.version-control[data-update-status="available"] .version-dot { background:var(--update-marker); animation:version-pulse 1.65s ease-in-out infinite }
+@keyframes version-pulse { 50% { opacity:.3 } }
+@media(prefers-reduced-motion:reduce) { .version-control[data-update-status="available"] .version-dot { animation:none } }
+.automation-feedback { padding:var(--space-2) var(--space-3); margin:0 }
+.automation-feedback:empty { display:none }
+@media(min-width:64rem) {
+  .automation-indicators { order:0; flex:0 0 auto; padding:var(--space-1) var(--space-2); border:0 }
+}
+.menu-toggle { flex:none; display:grid; place-items:center; min-width:var(--tap); min-height:var(--tap); border:0;
+  background:transparent; color:var(--ink) }
+.menu-toggle:hover,.account-menu summary:hover { background:var(--surface) }
+.menu-toggle span { width:1.05rem; height:2px; background:currentColor; box-shadow:0 -.29rem currentColor,0 .29rem currentColor }
+.breadcrumbs { flex:1; min-width:0; padding-inline:var(--space-1); overflow:hidden }
+.breadcrumbs ol { display:flex; align-items:center; gap:var(--space-2); list-style:none; padding:0; margin:0; white-space:nowrap }
+.breadcrumbs li { overflow:hidden; text-overflow:ellipsis }
+.breadcrumbs li:last-child { color:var(--ink); font-weight:650 }
+.crumb-divider { color:var(--muted) }
+.account-menu { position:relative; flex:0 1 auto; min-width:0; margin-inline:var(--space-1) var(--space-2) }
+.account-menu summary { min-height:var(--tap); display:flex; align-items:center; gap:var(--space-2); cursor:pointer;
+  list-style:none; padding:.2rem var(--space-2); border-radius:var(--radius-1) }
+.account-menu summary::-webkit-details-marker { display:none }
+.account-menu summary::after { content:""; flex:none; width:.38rem; height:.38rem; border-inline-end:1px solid;
+  border-block-end:1px solid; transform:translateY(-.12rem) rotate(45deg); color:var(--muted) }
+.account-menu[open] summary::after { transform:translateY(.12rem) rotate(225deg) }
+.account-avatar { flex:none; display:grid; place-items:center; width:1.9rem; height:1.9rem; border-radius:50%;
+  background:var(--tint); color:var(--accent); font-weight:750 }
+.account-name { min-width:0; max-width:10rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-weight:650 }
+.account { position:absolute; inset-inline-end:0; inset-block-start:calc(100% + .25rem); z-index:12;
+  width:min(16rem,calc(100vw - var(--space-5))); padding:var(--space-3);
+  border:1px solid var(--line); background:var(--panel); border-radius:var(--radius-2); box-shadow:var(--shadow); overflow-wrap:anywhere }
+.account strong { display:flex; align-items:center; gap:var(--space-2) }
+.account strong::before { content:""; width:.5rem; height:.5rem; border-radius:50%; background:var(--muted); flex:none }
+.account[data-ready="true"] strong::before { background:var(--success) }
+.account span { display:block; margin-block:var(--space-1) var(--space-2) }
+.account .btn { min-height:var(--tap) }
+.workspace-tabs { display:flex; align-items:center; min-width:0; overflow:auto; gap:var(--space-1);
+  margin:0; padding:var(--space-1) var(--space-2); list-style:none; border-block-start:1px solid var(--line) }
+.workspace-tab { flex:none; display:flex; align-items:center; border:1px solid var(--line); border-radius:var(--radius-1);
+  color:var(--muted); background:var(--panel); font-size:var(--small) }
+.workspace-tab.selected { color:var(--accent); background:var(--tint); border-color:var(--accent) }
+.workspace-tab button { min-height:2.25rem; padding:0 var(--space-2); color:inherit; background:transparent;
+  border:0; border-radius:var(--radius-1); white-space:nowrap }
+.workspace-tab button:hover { background:var(--surface); color:var(--ink) }
+.workspace-tab button[aria-current="page"] { font-weight:700 }
+.workspace-tab button[aria-current="page"]::before { content:""; display:inline-block; vertical-align:.09em; width:.4rem; height:.4rem;
+  margin-inline-end:var(--space-1); border-radius:50%; background:currentColor }
+.workspace-tab .tab-close { min-width:1.8rem; padding-inline:var(--space-1); font-size:1rem; color:var(--muted) }
+.workspace-tab button:focus-visible { outline-offset:-.16rem }
+main { min-width:0; width:100%; max-width:104rem; padding:var(--space-3) var(--space-3) var(--space-6); margin-inline:auto }
+.workspace-shell[data-current-view="setup"] main { display:grid; flex:1; max-width:none; padding:0 }
+.account-tools { display:flex; gap:var(--space-2); flex-wrap:wrap }
+.account-tools + .small { display:block; margin-block-start:var(--space-2) }
+.update-strip { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-2);
+  padding:var(--space-2) var(--space-3); background:var(--tint); border-block-start:1px solid var(--line) }
+.update-strip strong { color:var(--accent); margin-inline-end:auto }
+.update-strip small { flex-basis:100%; margin-inline-start:0; overflow-wrap:anywhere }
+.update-dialog { width:min(32rem,calc(100% - var(--space-5))); max-height:calc(100% - var(--space-5));
+  color:var(--ink); background:var(--panel); border:1px solid var(--line); border-radius:var(--radius-3);
+  padding:var(--space-5); box-shadow:var(--shadow) }
+.update-dialog::backdrop { background:var(--drawer-shade) }
+.update-dialog form { display:grid; gap:var(--space-3) }
+.update-dialog p:empty { display:none }
+.release-notes { white-space:pre-wrap; overflow-wrap:anywhere }
+.card { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius-3); min-width:0; overflow:hidden }
+.card-head { padding:var(--space-4); display:flex; gap:var(--space-3); justify-content:space-between; align-items:start; flex-wrap:wrap }
+.card-head h2 + p { margin-top:var(--space-1) }
+.panel-body { padding:var(--space-4); display:grid; gap:var(--space-4) }
+.settings-grid { display:grid; gap:var(--space-4) }
+.history-library { display:grid; gap:var(--space-4) }
+.knowledge-history { display:grid; align-items:start; gap:var(--space-3); padding:var(--space-4) }
+.knowledge-history-info { display:grid; gap:var(--space-1); min-width:0 }
+#learning-status:empty, #history-card-feedback:empty { display:none }
+.knowledge-scope { color:var(--muted) }
+.knowledge-scope summary, .knowledge-upload summary { cursor:pointer }
+.knowledge-scope p { margin-block-start:var(--space-2) }
+.knowledge-tabs { display:flex; flex-wrap:wrap; gap:var(--space-1); padding:var(--space-2) var(--space-3); border-block-end:1px solid var(--line) }
+.knowledge-tabs button { color:var(--muted); background:transparent; border:0 }
+.knowledge-tabs button:hover { background:var(--surface); color:var(--ink) }
+.knowledge-tabs button[aria-selected="true"] { background:var(--tint); color:var(--accent); font-weight:700 }
+.knowledge-tools { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:var(--space-2) }
+.history-card-search { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:var(--space-2); width:min(100%,28rem) }
+.history-card-list { min-width:0; border:1px solid var(--line); border-radius:var(--radius-2) }
+.history-card-head, .history-card-editor > summary { display:grid; grid-template-columns:1rem minmax(0,1fr) auto; align-items:center; gap:var(--space-2); padding:var(--space-2) var(--space-3) }
+.history-card-head { color:var(--muted); background:var(--surface); font-size:var(--small); font-weight:650 }
+.history-card-head .card-title-cell { grid-column:2 }
+.history-card-editor { border-block-start:1px solid var(--line); min-width:0 }
+.history-card-editor > summary { min-height:var(--tap); cursor:pointer; list-style:none; overflow-wrap:anywhere }
+.history-card-editor > summary::-webkit-details-marker { display:none }
+.history-card-editor > summary:hover, .history-card-editor[open] > summary { background:var(--surface) }
+.history-card-editor > summary::before { content:""; width:.42rem; height:.42rem; border-block-start:1px solid; border-inline-end:1px solid; color:var(--muted); transform:rotate(45deg) }
+.history-card-editor[open] > summary::before { transform:rotate(135deg) }
+.card-title-cell { min-width:0; font-weight:650 }
+.card-trigger-cell { display:none }
+.card-use-cell { color:var(--muted); font-size:var(--small); min-width:0 }
+.history-card-editor .card-use-cell[data-enabled="true"] { color:var(--success) }
+.knowledge-pagination { display:flex; flex-wrap:wrap; align-items:center; justify-content:end; gap:var(--space-2) }
+.knowledge-narrow { width:min(100%,50rem) }
+.tone-fields { display:grid; gap:var(--space-4) }
+.knowledge-upload { border:1px solid var(--line); border-radius:var(--radius-2) }
+.knowledge-upload > summary { min-height:var(--tap); padding:var(--space-3); font-weight:650 }
+.knowledge-upload[open] > summary { border-block-end:1px solid var(--line) }
+.knowledge-upload input[type="file"] { max-width:100%; min-width:0 }
+@media(min-width:48rem) {
+  .knowledge-history { grid-template-columns:minmax(0,1fr) auto }
+  .history-card-head, .history-card-editor > summary { grid-template-columns:1rem minmax(0,3fr) minmax(0,2fr) 5rem }
+  .card-trigger-cell { display:block; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--muted); font-size:var(--small) }
+}
+.history-loading { display:flex; align-items:flex-start; gap:var(--space-2); color:var(--accent) }
+.history-spinner { display:inline-block; flex:none; width:1em; height:1em; margin-block:.25em; border:.14em solid var(--line); border-block-start-color:var(--accent); border-radius:50%; animation:history-spin 900ms linear infinite }
+@keyframes history-spin { to { transform:rotate(360deg) } }
+@media (prefers-reduced-motion:reduce) { .history-spinner { animation:none } }
+[data-panel="setup"] { display:grid; min-width:0 }
+.setup-card { display:flex; flex-direction:column; border:0; border-radius:0 }
+.setup-card > .panel-body { display:flex; flex-direction:column; flex:1; min-width:0 }
+.setup-card .setup-stage { flex:1; align-content:start }
+.setup-card #setup-feedback:empty { display:none }
+.setup-steps { display:grid; gap:var(--space-2); list-style:none; margin:0; padding:var(--space-3) var(--space-4); border-block-end:1px solid var(--line) }
+.setup-steps li { display:flex; gap:var(--space-2); align-items:center; min-width:0; color:var(--muted) }
+.setup-steps li[aria-current="step"] { color:var(--accent); font-weight:750 }
+.step-number { display:grid; place-items:center; width:1.45rem; height:1.45rem; flex:none; border:1px solid currentColor; border-radius:50%; font-size:var(--small) }
+.setup-steps [aria-current="step"] .step-number { background:var(--tint) }
+.setup-stage,.setup-ai,.reply-ai-settings { display:grid; gap:var(--space-4) }
+#reply-context-count { width:min(100%,8rem) }
+.setup-account,.setup-contact { overflow-wrap:anywhere; padding:var(--space-3); background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-2) }
+.setup-account[data-ready="true"] { color:var(--success); font-weight:700 }
+.setup-actions { display:flex; gap:var(--space-2); flex-wrap:wrap }
+.setup-history { display:grid; gap:var(--space-3); width:min(100%,50rem); padding:var(--space-4); border:1px solid var(--line); border-radius:var(--radius-2); background:var(--surface) }
+.setup-history p:empty { display:none }
+@media(min-width:36rem) { .setup-steps { grid-auto-flow:column; grid-auto-columns:minmax(0,1fr) } }
+.inline { display:flex; flex-wrap:wrap; gap:var(--space-2); align-items:center }
+.input,textarea { width:100%; min-width:0; border-radius:var(--radius-1); padding:var(--space-2) var(--space-3); border:1px solid var(--line); background:var(--panel); color:var(--ink); min-height:var(--tap) }
+.input:hover,textarea:hover { border-color:var(--muted) }
+textarea { resize:vertical }
+.field { display:grid; gap:var(--space-1); min-width:0 }
+.field label,legend { font-weight:650 }
+.model-key-saved { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-3); min-height:var(--tap); padding-inline:var(--space-3); border:1px solid var(--line); border-radius:var(--radius-1); background:var(--surface) }
+.model-key-saved strong { margin-inline-end:auto }
+.model-key-editor { display:grid; gap:var(--space-2) }
+.model-key-editor > .btn { justify-self:start }
+.model-key-input { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:var(--space-2) }
+fieldset { padding:0; margin:0; border:0; min-width:0 }
+legend { margin-bottom:var(--space-2) }
+.btn { min-height:var(--tap); border:1px solid var(--line); color:var(--ink); background:var(--panel); border-radius:var(--radius-1); padding:var(--space-2) var(--space-3); font-weight:650 }
+.btn:hover,.btn:active { background:var(--surface); border-color:var(--muted) }
+.btn.primary { background:var(--accent); color:var(--accent-text); border-color:var(--accent) }
+.btn.primary:hover,.btn.primary:active { background:var(--accent-hover); border-color:var(--accent-hover) }
+.btn.danger { color:var(--danger) }
+.btn.sm { font-size:var(--small); min-height:2.3rem }
+[aria-pressed="true"] { background:var(--tint); color:var(--accent); border-color:var(--accent) }
+.operation-tools { display:flex; gap:var(--space-3); flex-wrap:wrap; justify-content:space-between;
+  align-items:center; padding:var(--space-4); border-block-end:1px solid var(--line) }
+.operation-count { padding:var(--space-2) var(--space-4) 0 }
+.operation-list { list-style:none; margin:0; padding:0 var(--space-4) }
+.operation-list li { padding:var(--space-4) 0; overflow-wrap:anywhere }
+.operation-list li + li { border-block-start:1px solid var(--line) }
+.operation-heading { display:flex; justify-content:space-between; flex-wrap:wrap; gap:var(--space-1) var(--space-3) }
+.operation-text { margin-block-start:var(--space-1); white-space:pre-wrap }
+.empty { min-height:12rem; display:grid; align-content:center; justify-items:start; padding:var(--space-5); gap:var(--space-2); color:var(--muted) }
+.empty h3 { color:var(--ink) }
+.more { margin:var(--space-3) var(--space-4); align-self:flex-start }
+.split-field { display:grid; gap:var(--space-3) }
+.form-head { border-bottom:1px solid var(--line) }
+.form-actions { display:flex; align-items:center; gap:var(--space-3); flex-wrap:wrap }
+.local-status { color:var(--muted); overflow-wrap:anywhere }
+.error { color:var(--danger) !important }
+.preview-result { background:var(--surface); padding:var(--space-4); border-radius:var(--radius-2); border:1px solid var(--line); overflow-wrap:anywhere }
+.preview-result p { white-space:pre-wrap; margin-top:var(--space-2) }
+.analysis-panel { border:1px solid var(--line); border-radius:var(--radius-2); background:var(--surface); min-width:0 }
+.analysis-panel summary { padding:var(--space-3); min-height:var(--tap); cursor:pointer; color:var(--accent); font-weight:650 }
+.analysis-panel summary:hover { background:var(--tint); border-radius:var(--radius-2) }
+.analysis-content { display:grid; gap:var(--space-3); padding:var(--space-3); border-block-start:1px solid var(--line) }
+.choices { max-block-size:14rem; overflow:auto; display:grid; gap:var(--space-1) }
+.choice { display:flex; align-items:center; gap:var(--space-2); min-height:var(--tap);
+  padding:var(--space-1) var(--space-2); border-radius:var(--radius-1); overflow-wrap:anywhere }
+.choice:hover,.choice:has(input:checked) { background:var(--tint) }
+.choice input { flex:none; accent-color:var(--accent) }
+.style-summary { margin-block:var(--space-2); padding-inline-start:var(--space-5) }
+.analysis-result .btn { margin-block-start:var(--space-3) }
+.detail-row,.file-row { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:var(--space-3); padding:var(--space-3); border:1px solid var(--line); border-radius:var(--radius-1); overflow-wrap:anywhere }
+.file-row + .file-row,.detail-row + .detail-row { margin-top:var(--space-2) }
+.customer-assignments { display:grid; gap:var(--space-2); min-width:0 }
+.customer-assignments strong { display:block; overflow-wrap:anywhere }
+.customer-assignments .inline { gap:var(--space-1) }
+.contact-search input { flex:1 1 12rem }
+.upload { background:var(--surface); border:1px dashed var(--line); border-radius:var(--radius-2); padding:var(--space-5); display:grid; gap:var(--space-3); justify-items:start }
+.upload input { width:100%; min-width:0; overflow:hidden }
+.upload input::file-selector-button { min-height:var(--tap); font:inherit; font-weight:650; padding-inline:var(--space-3); color:var(--ink); background:var(--panel); border:1px solid var(--line); border-radius:var(--radius-1); cursor:pointer; margin-inline-end:var(--space-2) }
+.skip { position:fixed; inset-inline-start:var(--space-3); inset-block-start:var(--space-2); transform:translateY(-150%);
+  background:var(--panel); padding:var(--space-2); z-index:35 }
+.skip[data-keyboard]:focus-visible { transform:none }
+@media(max-width:24rem) {
+  .breadcrumb-root,.crumb-divider { display:none }
+  .account-name { max-width:6.25rem }
+}
+@media(min-width:38rem) {
+  main { padding-inline:var(--space-4) }
+  .split-field { grid-template-columns:repeat(2,minmax(0,1fr)) }
+}
+@media(min-width:48rem) {
+  .shell { display:grid; grid-template-columns:var(--sidebar-width) minmax(0,1fr) }
+  .shell[data-side="compact"] { grid-template-columns:var(--sidebar-compact) minmax(0,1fr) }
+  .sidebar { display:block; position:sticky; inset-block-start:0; height:100dvh; width:100% }
+  .sidebar-close,.drawer-shade { display:none }
+  .brand { padding-inline:var(--space-3) }
+  .shell[data-side="compact"] .brand,.shell[data-side="compact"] .nav button { justify-content:center; padding-inline:var(--space-2) }
+  .shell[data-side="compact"] .brand-icon { width:1.75rem }
+  .shell[data-side="compact"] .version-control { display:none }
+  .shell[data-side="compact"] .brand-name,.shell[data-side="compact"] .nav-label { position:absolute; width:1px;
+    height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap }
+  .workspace-tab button { min-height:1.9rem }
+}
+@media(min-width:66rem) {
+  main { padding:var(--space-4) var(--space-5) var(--space-6) }
+
+  .settings-grid { grid-template-columns:minmax(0,1.15fr) minmax(0,1fr); align-items:start }
+}
+</style>
+</head>
+<body>
+<a class="skip" id="skip-link" href="#main">跳到主要内容</a>
+<div class="shell" id="shell" data-side="expanded" data-mobile-menu="closed">
+  <aside class="sidebar" id="sidebar" aria-label="工作台菜单">
+    <div class="brand">
+      <div class="brand-identity">
+        <span class="brand-icon" aria-hidden="true"><img src="data:image/webp;base64,UklGRuANAABXRUJQVlA4WAoAAAAQAAAAXwAAXwAAQUxQSGQFAAABCsq2bRuyrR2R+WzbtvENtll6Rdu2bdtGzSrZ5g/4pSKitRd7Ye/ID5grVkQ4lGS1bR7CRfVZEeCSL4AoRdmxICRJMRgidC6F99AzCgAWW3l1XwMe1cOa7nAH4Ku5wxGJAwaLCEQEnbIEfJXFAwDlQQ8svMu1b/32x9//mAEwM/vXYBYxACVgFlMyGCL5y2MmUf4fv7177e7/Fw1UutSpXzeZpGYIwHTy0znLy5lFGfb+obHpeDLLKr2OC6yx3w8PBXhFuLaxcV/FMnO0iCjAAQcr7s5RgE76sdmtg8Cloi8fbSZThmukgHOXyOa0cCcU2KochbZ68/yCZcG1uLMZVeC4EnATJQJOCMhgqI/s4TBg9GiiPGLCNB8se8qLmSZuBjjqIzuepLJY8y/m4t2ZUQgcQjlPT+Aj8cW0/2+9ooz39zVjftG4s1cISTmIIsJ9bE9EuxIbjAW67uxkObQTBFpNB8pi82DAEOf/vxfXoESXryqsOqGpuBwwtivCECjKD5sJZwBk6XF9KjuHyhLdpd9y2nwxKEKJdUfVVDO1DiAdtCfRZDgD3zTYEHs241klTaxnWkgMJUULenpQGDqOYVpLtpcwjmhCHAARp7Q4WwC7l6vrTUFYbAIub3EeBz3/DMrMYCqgvsA6qgeAIaBfBS7gshbn21hahC6hlkUDd34El3BB1Mz5vriyNFFBPLmUbDhTisFprsR3KYBseIfkyKfK4VyRfWEzZo2GPcolouEoqwhhT3GUsxveVJmT89oNp55dAS3Y7FHblpNYu9nx9VpcQlAJyK7QeEK5GW+R7qLmH4dFz0Hordvk8w53B2QIwbXuHLzf4P2eA/AI3Z8q/F58mxgzmi9cQjfuTpHzSvSNXedXSc8KVGCp8ySU0MXN823MRw7VdAvUeQ65AT0QMddx4FKi36aqaZ0V6XFTh2peQI896QTzjAQOObMZe1Sd8iRqNarUbABqp6q28zSzU/rVLpx2Hgh21ykQMRbuS4W4787ccHWp+mwCWr0jxP5RfTIimhfa5a18LqAg3Xd2HkHfTLiv7EBZ00y4L+XTHOFyio4TiU1JJzP37hJLtVJsLlXBcyfh4TABnMF7ZggPnylxQXiW7wzxmCpcSDrqBKqloml2UWx3OStyPkhGldAsqu/MKBqfmUOS7Frx0kURUToD2yyODRpkFvV7D+6xUlTeGhlOWUHjPoFSpTmtlcgQ92kZG3kEQ3FHskbBQd5wcVmPtKUjWzWUVc61EX1NzFbRko/Dl2qqaijvu6S46Z647uM9uQRi3OytWQS93yZ1UyHGGRb0IEdcTrhCyYkwM0gmUw1yUoFW9gyoIdkNfwOb/FzDwKGrqrsN5n8tzeYK3Xs5AAmZkpOuFeaify/KHDNOKCHpLKftVgkuLnAtHO7oQFJwLvGr2ukSLrLuBifQ524lFO6kzoqzW+xnk0rvNRRXmhtHhWGJTfmbClfkKJAz9NTbhUGBBb9pprzXmB/p7ZdFQhGGuIL9LDZXaWy3hgFQYkvaF+1sbjb1jtGHtx5Px5E5Ice7waR5NZTxd8nNJvQLMlPA32h3pG7Ymnz47HF65Lq5zucCI7uIfrgt+vCseXIzz6+vlcy3+cIWfb3xqLMEzQwf2QdLsV/mSyz2TFNN0IUovYrNmleXbtuwCWeMmtl46lX3HfVjN7+oFBQoLGz1dNVYPRljBEncHRpxQEXHqsbslR1DAdX/Ora/+rNJ07lU39y4c8AAGikNsI33Oe5s4Nz+HIP11grQmwFnwfoeEZPerAd6wstg57n3Zm6wkw7cYsHoCpRiQ8yFDKQjcQyPZAF3AKQdPBrAOSFkdJRMGgRWUDggVggAADAoAJ0BKmAAYAA+ORiKQyIhoRVaBdQgA4S1AFiPuQSv2X8kf2Z/zPzDV9+8/gjoPj99fH57yjPZT9wHuAfoz/lf651nPMB+vf7H+8T6YPQA/nH9V/+vYi+gB+2/pjftF8FP7Uftb7OP/pzQDrMcqZRJog/wHy5c/+1P/dvyb/IrOZfr3+b41dKJ8i9gD8s+gN/v+Xf80/zH/P/xP4tfYL/H/6Z/pv7b7RnsN9Hv9khlRnpQ81ihwx+JP0LqXo/tvN4PNv7jTnTmGFh8JX+0X7y5D2oaDLTiBnFRYML3/EFdis6Z6T//zSGvKJaNwxtq/K/8WEQsryKD3pHdkKEnep1ghhFjUrshgzaLGZbe+kKK+C9L3dCbv6q1xm+TQ9c/e+MCyFnDU8+q4AQlXt32opiPi3JpFIbEL7nxACfibkVu3+TP7yF5xnncwAD+9+k/wgihM86+5crJBepYiZbXrQndgLw0n/v/Ds/Q73Bol/2m/+hUO+GfU2sKFw1YPi440nULIh5Yn8+I6xd8RRp6mKIFJ3DfFrtkRrjWGPl8BoXUbVlkxxywgAFFSCNGEoL1sOQTccEgdUrdyyt9bWMgFgXls78sfLwTPZgzkK45UpSlR1TfrMuSr1Fdru31V4U+AnVyzcvelFxtHdYq8lq0Nr6kHHXScP04w/xeM5j2O5OQKnsRaACg+8OJvKuM4sBus5J52Zci7tTWA7xLi+DxOXplr/117Iy49GWIzZSpnhIqCCH5/9sIEhGAWr1Lp83DWUZeXSeeuoIcLcFrcrLZCQ0dEkl6KTDQhCfS/ci1sg/IDqEVXkpn31ULniUt//2TeDjeS/evexgbDi2LSfvRULfUNvglq7+3vy32yzFpf4W6wNOb5IorEhunAQoYxBOZrm2nSAYVkgpr4/xNvI3yPjCJYC/3LpukH1IKWpaEe7azflYIco/LbJ1ySEs6eNIViswMlCpRePYjWgv4J79L8DyqJ1pUgUsoEAnSoR6tRmchb2VFnD1/H4sqvj4bI4nvkw0zITUVAKJcIlqlvUBj++WDcTdxHgiqkEpJb9K8yvLJ93YM0f/NaFtFB/tLE/tAQQkohPUBenrq8+u/pSyki61R/sU4A8OMTsFeHdZQiamB3k64/UpsJg6MjIc858kNmEIO7AGV5sTACt9LTz6Xt8kdwv573ZIJ/O8U09lkTRPr5N9l6tBIZfVk95aTGLuAnI4e6//gXwb9kAgiQsPwLb4YB9X1M2CtpO/hhq7DpANNOVa9KnfbkBLO6qui0xjcB7sHt0B5H7j9pA1z3L/d3L0Hf5ily/Jw9vXESuzeqOqwdj951+Y8FmklQ/ap6nqObvL4C73KrW+F/I+J6R3zFsFyio4L53dz15EcdjuatjhUfm6USmT11uGff3mGBiC1unlBD4S+BPs5LfIOZd5i9lDQMcBqtSKjX9R8RIm/neKaeyyJBt31IZ6QpFDbjmG1irsOUCVfT+90vm7UHtO2ccZyIRpD1VEKST/6GEbG+B2XR/Jmfaw1vKgnpPcIJoiErAfvRBJVNtPlH/IWdF2X9/6Tc5j8nXrS6TKm4inwz7PAnWZyW3yJ2SoK4OQWcW/vozQazIWNRSPynDEZHjsMuZm/AA/H0/30EW73+jHHa1yKb7U3k1/W1s+i/NUV22m59MPGDzh55Vx9F/aKJcXA/JiUi+qePhtD3tyVmYipVrKcPkzt2acTTyJGft2qV/RR7+wVW33+1a3ft2F6V6nYWp9o7I9k9unE2bwc30ae/ZzDXt57nmrKhmQLJOhD+hd7CJ1MlNdJutQcpT2J5lhY/2PFb/5ZfJD6X51ALYf+CYzSdimjzyFmL/ZOXCSstEakohRdlv8P2SXwSv4uex7PnCdA6/J6qvMg19Ln0PQglV8ckg8mYqTlFNNRRR64Gwi59LxVs9z/870SOmb3naiqwEHcnFx62lb7cD6JapYY+IYT9wmaYsv1U9weBXN6XFGW8Bt+ktX8Up+wEYjN/zHsyHZSh/UPEvGt2zu+Np5U0J+ICfYqPE3/254EYtDONtmBQZkY8sD7bfRX6BSRJ3QyuuADqfM5x+twN4+uh/s720RJ2sJfyDM0pqMvSWJzAHyqzRxN+fb28q7e6gzEkOA9uLH1U7aTX7YUCllsbqSuOvwEfP8axVOeYx2e0BuYaRzxVhJrfmHCF1W8cf/8oCx/7DqwtaFIrhz3yz9adW3zEyGfDvBGfNvo5mrsGX/MLgYcDhYHXhjzHdV56cwVbcMfz9NycezUVLcMv4QdJvXy0B4Vn1SOcBRJtRPJCrfiEFjUGN3KP/WDwIvb5JLtfgaI2KsqQ+4JsJrtULtTBYniWBUvyyAYndlICZgLbvgP/wHWNqX6/lb9OrNFzRed7/ML1/ot64F7/yajuUnfNPcRSsJ81UZ7HjQSx6lbtvQGOEU6Ob/F+/w22eL99uhnVIKh6fxNVlF/ffanncP0IiJ0SM+E0NcpjRFaDUVf/zfc0k3htjLRL6X10p1I333Yqv3nTFy5OK62q4Tt71AvcxceNtJlNbiWuL0kiIR3xEin7BkBUHQn5RbxtpMqr+uPAjA9/EacxilTVAm8nb9Qt4kLOrt585Wk80TjuXT56aJnwMYPLwco2IPmjjOCfnqgxRua8aNpu4V/59O7jxDGsLpP5o0Wm/E1Ar8cDa+TN3Zbv7ET2XmC0sBndEuF1JPYkPvyttLE5vTzkkFWxw9OlUhdeXtu2xIWhFMZlGIM0Xo6Q99W5e4eLum3AGTFyIKELDJQOENycNrsa1DFSOoNYGy0hBVqKOBDNOtGvScWmiijy1bE/M2wsp4K9Zik+Q8ZX8jE/dz2VZrYAAA=" width="96" height="96" alt=""></span>
+        <div class="brand-copy">
+          <span class="brand-name">微信客服助手</span>
+          <button type="button" class="version-control" id="version-button" aria-haspopup="dialog" aria-label="查看版本信息">
+            <span class="version-dot" id="version-dot" aria-hidden="true" hidden></span>
+            <span id="version-label">版本</span>
+          </button>
+        </div>
+      </div>
+      <button type="button" class="sidebar-close" id="sidebar-close" aria-label="关闭菜单">×</button>
+    </div>
+    <nav class="nav" aria-label="功能菜单">
+      <button type="button" data-view="setup" title="首页" aria-current="page"><span class="nav-icon menu-home" aria-hidden="true"></span><span class="nav-label">首页</span></button>
+      <button type="button" data-view="operations" title="运行记录"><span class="nav-icon menu-chat" aria-hidden="true"></span><span class="nav-label">运行记录</span></button>
+      <button type="button" data-view="reply" title="回复设置"><span class="nav-icon menu-reply" aria-hidden="true"></span><span class="nav-label">回复设置</span></button>
+      <button type="button" data-view="ai" title="AI 配置"><span class="nav-icon menu-ai" aria-hidden="true"></span><span class="nav-label">AI 配置</span></button>
+      <button type="button" data-view="group" title="建群设置"><span class="nav-icon menu-group" aria-hidden="true"></span><span class="nav-label">建群设置</span></button>
+      <button type="button" data-view="knowledge" title="知识库"><span class="nav-icon menu-book" aria-hidden="true"></span><span class="nav-label">知识库</span></button>
+    </nav>
+  </aside>
+  <div class="drawer-shade" id="drawer-shade" aria-hidden="true" hidden></div>
+  <div class="workspace-shell" id="workspace-shell" data-current-view="setup">
+    <header class="workspace-header">
+      <div class="topbar">
+        <button type="button" class="menu-toggle" id="menu-toggle" aria-label="显示菜单" aria-controls="sidebar" aria-expanded="false"><span aria-hidden="true"></span></button>
+        <nav class="breadcrumbs" aria-label="当前位置">
+          <ol><li class="breadcrumb-root muted">工作台</li><li class="crumb-divider" aria-hidden="true">/</li><li id="current-location" aria-current="page">运行记录</li></ol>
+        </nav>
+        <div class="automation-indicators" aria-label="自动化运行状态">
+          <span class="automation-indicator" id="reply-indicator" role="status">自动回复 <b>检查中</b></span>
+          <span class="automation-indicator" id="group-indicator" role="status">自动建群 <b>检查中</b></span>
+        </div>
+        <button type="button" class="btn sm automation-toggle" id="automation-toggle" disabled>暂停自动化</button>
+        <details class="account-menu" id="account-menu">
+          <summary id="account-toggle"><span class="account-avatar" id="account-avatar" aria-hidden="true">微</span><span class="account-name" id="account-name">检查微信</span></summary>
+          <div class="account" id="account">
+            <strong id="account-title">正在检查微信</strong><span class="small" id="account-info" role="status">读取登录状态中</span>
+            <div class="account-tools">
+              <button type="button" class="btn sm" id="refresh-account">刷新账号状态</button>
+              <button type="button" class="btn sm" id="account-check-update">检查更新</button>
+            </div>
+          </div>
+        </details>
+      </div>
+      <p class="small automation-feedback" id="automation-feedback" role="status"></p>
+      <div class="update-strip" id="history-notice" hidden>
+        <span class="history-spinner" id="history-notice-spinner" aria-hidden="true" hidden></span>
+        <strong id="history-notice-text" role="status"></strong>
+        <button type="button" class="btn sm" id="view-history-result">查看结果</button>
+        <button type="button" class="btn sm" id="dismiss-history-notice" aria-label="关闭历史整理通知">关闭</button>
+      </div>
+      <nav aria-label="打开的页面">
+        <ul class="workspace-tabs" id="workspace-tabs"><li class="workspace-tab selected"><button type="button" aria-current="page">运行记录</button></li></ul>
+      </nav>
+    </header>
+    <dialog class="update-dialog" id="update-dialog" aria-labelledby="update-dialog-title">
+      <form method="dialog">
+        <h2 id="update-dialog-title">版本更新</h2>
+        <p class="small" id="installed-version">正在读取当前版本</p>
+        <p id="latest-version" hidden></p>
+        <p class="small" id="update-check-info" role="status">正在检查更新</p>
+        <p class="release-notes" id="update-notes" hidden></p>
+        <p class="small" id="update-progress" role="status" hidden></p>
+        <div class="form-actions">
+          <button type="button" class="btn primary" id="install-update" hidden>下载并更新</button>
+          <button type="button" class="btn" id="check-update">检查更新</button>
+          <button type="submit" class="btn" autofocus>关闭</button>
+        </div>
+      </form>
+    </dialog>
+    <main id="main" tabindex="-1" aria-label="首页">
+    <section data-panel="setup">
+      <form class="card setup-card" id="setup-form" novalidate>
+        <div class="card-head form-head"><h2>使用配置</h2></div>
+        <ol class="setup-steps" aria-label="配置进度">
+          <li data-setup-index="0" aria-current="step"><span class="step-number">1</span>识别微信</li>
+          <li data-setup-index="1"><span class="step-number">2</span>选择回复方式</li>
+          <li data-setup-index="2"><span class="step-number">3</span>设置测试联系人</li>
+          <li data-setup-index="3" id="setup-history-index" hidden><span class="step-number">4</span>整理微信历史</li>
+        </ol>
+        <div class="panel-body">
+          <section class="setup-stage" data-setup-step="0">
+            <h3 tabindex="-1">在这台电脑登录微信</h3>
+            <p class="setup-account" id="setup-account" role="status">正在检查电脑版微信</p>
+            <div class="inline">
+              <button class="btn" type="button" id="setup-open-wechat">打开电脑版微信</button>
+              <button class="btn" type="button" id="setup-detect-wechat">识别微信</button>
+            </div>
+          </section>
+          <section class="setup-stage" data-setup-step="1" hidden>
+            <h3 tabindex="-1">配置自动回复</h3>
+            <fieldset><legend>回复方式</legend><div class="inline">
+              <label class="choice"><input type="radio" name="setup-mode" value="fixed" checked>固定回复</label>
+              <label class="choice"><input type="radio" name="setup-mode" value="model">AI 回复</label>
+            </div></fieldset>
+            <div class="field" id="setup-fixed-fields">
+              <label for="setup-fixed">固定回复</label><textarea id="setup-fixed" rows="3" maxlength="1000"></textarea>
+            </div>
+            <div class="setup-ai" id="setup-ai-fields" hidden>
+              <div class="field"><label for="setup-model-url">模型接口地址</label><input class="input" id="setup-model-url" type="url" maxlength="300" placeholder="https://模型接口地址/v1"></div>
+              <div class="field"><label for="setup-model-name">模型名称</label><input class="input" id="setup-model-name" maxlength="120"></div>
+              <div class="field"><label for="setup-api-key">AI Key</label>
+                <div class="model-key-saved" id="setup-key-saved" hidden><strong>AI Key 已配置</strong><button class="btn sm" id="setup-key-change" type="button">更换 Key</button></div>
+                <div class="model-key-editor" id="setup-key-editor">
+                  <div class="model-key-input">
+                    <input class="input" id="setup-api-key" type="password" autocomplete="new-password" maxlength="4096" aria-describedby="setup-key-hint">
+                    <button class="btn" id="setup-key-show" type="button" aria-controls="setup-api-key">显示</button>
+                  </div>
+                  <button class="btn sm" id="setup-key-cancel" type="button" hidden>取消更换</button>
+                </div>
+                <small id="setup-key-hint">填写模型服务提供的 Key，保存在本机。</small>
+              </div>
+              <label class="choice"><input type="checkbox" id="setup-mimic">模仿我的回复语气</label>
+            </div>
+          </section>
+          <section class="setup-stage" data-setup-step="2" hidden>
+            <h3 tabindex="-1">用另一个微信号测试</h3>
+            <div class="field"><label for="setup-contact-query">测试微信昵称或备注</label>
+              <input class="input" id="setup-contact-query" type="search" maxlength="100" placeholder="输入联系人昵称">
+            </div>
+            <div class="inline"><button class="btn" type="button" id="setup-find-contact">搜索联系人</button></div>
+            <div class="choices" id="setup-contact-results" aria-label="搜索结果"></div>
+            <p class="setup-contact" id="setup-contact-selection" role="status">请选择一个测试联系人。</p>
+          </section>
+          <section class="setup-stage" data-setup-step="3" hidden>
+            <h3 tabindex="-1">配置已保存</h3>
+            <p id="setup-complete-info"></p>
+            <div class="setup-history" id="setup-history-fields" role="group" aria-labelledby="setup-history-title" hidden>
+              <div>
+                <strong id="setup-history-title">微信历史整理</strong>
+                <p class="small">预计需要 <strong>10–20 分钟</strong>，历史较多时可能更久。整理会在后台提炼回复语气和知识卡片，完成后通知你。</p>
+              </div>
+              <details class="knowledge-scope small"><summary>整理范围</summary><p>本机可读的微信文字聊天会分批交给已配置的 AI，常见号码、邮箱和链接会遮盖。</p></details>
+              <div class="history-loading" id="setup-history-loading" role="status" hidden>
+                <span class="history-spinner" aria-hidden="true"></span>
+                <div><strong id="setup-history-loading-label"></strong><p class="small local-status" id="setup-history-loading-counts"></p></div>
+              </div>
+              <p class="small local-status" id="setup-learning-status" role="status"></p>
+              <div class="setup-actions">
+                <button class="btn primary" type="button" id="setup-learn-history" disabled>开始整理</button>
+                <button class="btn" type="button" id="setup-cancel-learning" hidden>停止整理</button>
+                <button class="btn" type="button" id="setup-history-results" hidden>查看知识库</button>
+              </div>
+              <p class="small">可以稍后整理，也可以在整理期间进入回复设置。</p>
+            </div>
+            <div class="setup-actions">
+              <button class="btn primary" type="button" id="setup-enter-reply" data-view="reply">进入回复设置</button>
+              <button class="btn" type="button" id="setup-restart">重新配置</button>
+            </div>
+          </section>
+          <div class="setup-actions" id="setup-controls">
+            <button class="btn" type="button" id="setup-back" hidden>上一步</button>
+            <button class="btn primary" type="submit" id="setup-forward">下一步</button>
+          </div>
+          <p class="small local-status" id="setup-feedback" role="status"></p>
+        </div>
+      </form>
+    </section>
+    <section data-panel="operations" hidden>
+      <section class="card" aria-label="成功的运行记录">
+        <div class="operation-tools">
+          <div class="inline" role="group" aria-label="记录类型">
+            <button class="btn" type="button" data-record-kind="reply" aria-pressed="true">自动回复记录</button>
+            <button class="btn" type="button" data-record-kind="group" aria-pressed="false">建群记录</button>
+          </div>
+          <button class="btn sm" type="button" id="refresh-records">刷新</button>
+        </div>
+        <p class="small operation-count" id="record-count" role="status">正在读取运行记录</p>
+        <div class="empty" id="record-empty" hidden><h3 id="record-empty-title"></h3><p id="record-empty-text"></p></div>
+        <ul class="operation-list" id="operation-list" aria-label="成功记录"></ul>
+        <button class="btn sm more" type="button" id="more-records" hidden>查看更多</button>
+      </section>
+    </section>
+    <section data-panel="reply" hidden>
+      <div class="settings-grid">
+        <form class="card" id="reply-form">
+          <div class="card-head form-head"><div><h2>自动回复</h2></div></div>
+          <div class="panel-body">
+            <div class="field">
+              <label class="choice"><input type="checkbox" id="reply-enabled" aria-describedby="reply-switch-hint">开启私聊自动回复</label>
+              <small id="reply-switch-hint">保存后在后台接收消息，发送时需微信在前台。</small>
+            </div>
+            <fieldset><legend>回复方式</legend><div class="inline">
+              <label class="choice"><input type="radio" name="reply-mode" value="fixed" checked>固定话术</label>
+              <label class="choice"><input type="radio" name="reply-mode" value="model">AI 生成</label>
+            </div></fieldset>
+            <div class="field" id="reply-fixed-field"><label for="reply-fixed">固定回复</label><textarea id="reply-fixed" rows="2" maxlength="1000" required></textarea></div>
+            <fieldset><legend>自动回复范围</legend><div class="inline">
+              <label class="choice"><input type="radio" name="reply-scope" value="contacts" checked>指定联系人</label>
+              <label class="choice"><input type="radio" name="reply-scope" value="tags">按微信标签</label>
+            </div></fieldset>
+            <div class="field" id="reply-contact-fields">
+              <strong>自动回复联系人</strong>
+              <div class="choices" id="reply-targets"></div>
+              <details class="analysis-panel">
+                <summary>添加微信联系人</summary>
+                <div class="analysis-content">
+                  <div class="field"><label for="reply-contact-query">按微信昵称或备注查找</label><input class="input" id="reply-contact-query" type="search" maxlength="100"></div>
+                  <button class="btn sm" type="button" id="reply-contact-search">搜索</button>
+                  <p class="small" id="reply-contact-feedback" role="status"></p>
+                  <div class="choices" id="reply-contact-results"></div>
+                </div>
+              </details>
+            </div>
+            <fieldset id="reply-tag-fields" class="field" hidden>
+              <legend>微信标签</legend>
+              <div class="inline" role="radiogroup" aria-label="标签的回复规则">
+                <label class="choice"><input type="radio" name="reply-tag-rule" value="include" checked>只回复所选标签</label>
+                <label class="choice"><input type="radio" name="reply-tag-rule" value="exclude">排除所选标签</label>
+              </div>
+              <small id="reply-tag-rule-info">只回复带有任意一个所选标签的联系人。</small>
+              <div class="inline">
+                <button class="btn sm" type="button" id="sync-reply-tags">读取微信标签</button>
+                <small id="reply-tag-count" aria-live="polite"></small>
+              </div>
+              <p class="small" id="reply-tag-feedback" role="status"></p>
+              <div class="choices" id="reply-tag-options"></div>
+            </fieldset>
+            <div class="reply-ai-settings" id="reply-ai-settings" hidden>
+            <div class="field">
+              <label for="reply-context-count">上下文条数</label>
+              <input class="input" id="reply-context-count" type="number" min="5" max="50" step="1" value="20" required aria-describedby="reply-context-hint">
+              <small id="reply-context-hint">参考同一私聊中新消息之前的文字。默认 20 条，可设置 5–50 条。</small>
+            </div>
+            <div class="field"><label for="instruction">补充要求</label><textarea id="instruction" rows="3" maxlength="1800" placeholder="例如不要提前承诺交付时间。"></textarea></div>
+            <button class="btn sm" type="button" data-view="ai">配置 AI 模型</button>
+            </div>
+            <div class="form-actions"><button class="btn primary" id="save-reply" type="submit">保存回复设置</button><span class="local-status small" id="reply-feedback" role="status"></span></div>
+          </div>
+        </form>
+        <form class="card" id="preview-form">
+          <div class="card-head form-head"><div><h2>回复试写</h2><p class="small">试写结果显示在这里，供你检查后使用。</p></div></div>
+          <div class="panel-body">
+            <div class="field"><label for="customer-message">客户原话</label><textarea id="customer-message" rows="5" maxlength="2800" required placeholder="输入一条你想测试的消息。"></textarea><small>知识库仅在 AI 回复模式下生效。系统会自动检索匹配资料，作为回复的依据。</small></div>
+            <div class="form-actions"><button class="btn primary" id="preview-button" type="submit">生成试写</button><span class="local-status small" id="preview-feedback" role="status"></span></div>
+            <div class="preview-result" id="preview-result" hidden><h3 id="preview-mode"></h3><p id="preview-text"></p><small id="preview-sources"></small></div>
+          </div>
+        </form>
+      </div>
+    </section>
+    <section data-panel="ai" hidden>
+        <form class="card knowledge-narrow" id="model-form">
+          <div class="card-head form-head"><h2>AI 配置</h2></div>
+          <div class="panel-body">
+            <div class="split-field">
+              <div class="field"><label for="model-url">模型接口地址</label><input class="input" id="model-url" type="url" maxlength="300" placeholder="https://你的模型服务/v1" required></div>
+              <div class="field"><label for="model-name">模型名称</label><input class="input" id="model-name" maxlength="120" placeholder="填入服务商的模型名称" required></div>
+            </div>
+            <div class="field"><label for="reply-api-key">AI Key</label>
+              <div class="model-key-saved" id="reply-key-saved" hidden><strong>AI Key 已配置</strong><button class="btn sm" id="reply-key-change" type="button">更换 Key</button></div>
+              <div class="model-key-editor" id="reply-key-editor">
+                <div class="model-key-input">
+                  <input class="input" id="reply-api-key" type="password" autocomplete="new-password" maxlength="4096" aria-describedby="model-status">
+                  <button class="btn" id="reply-key-show" type="button" aria-controls="reply-api-key">显示</button>
+                </div>
+                <button class="btn sm" id="reply-key-cancel" type="button" hidden>取消更换</button>
+              </div>
+            </div>
+            <p class="small" id="model-status">正在检查模型配置</p>
+            <div class="form-actions"><button class="btn primary" id="save-model" type="submit" disabled>保存 AI 配置</button><span class="local-status small" id="model-feedback" role="status"></span></div>
+          </div>
+        </form>
+    </section>
+    <section data-panel="group" hidden>
+      <div class="settings-grid">
+        <form class="card" id="group-form">
+          <div class="card-head form-head"><div><h2>自动建群</h2><p class="small">每个群由当前微信发起，成员是当前微信、客户和该客户的对接人。</p></div></div>
+          <div class="panel-body">
+            <div class="field"><label for="group-name">群名模板</label><input class="input" id="group-name" maxlength="80" required><small>用 {客户} 作为客户名字的占位符。</small></div>
+            <div class="field">
+              <label class="choice"><input id="group-enabled" type="checkbox" aria-describedby="group-switch-hint">开启自动建群</label>
+              <small id="group-switch-hint">保存后在后台判断建群条件，执行时需微信在前台。</small>
+            </div>
+            <div class="field">
+              <span id="customer-assignment-label">客户与对接人</span>
+              <div class="customer-assignments" id="group-customers" role="group" aria-labelledby="customer-assignment-label"></div>
+            </div>
+            <div class="field">
+              <label for="group-trigger">什么情况触发建群</label>
+              <textarea id="group-trigger" rows="4" maxlength="1500" required></textarea>
+            </div>
+            <div class="field">
+              <label for="group-welcome">群内欢迎语</label>
+              <textarea id="group-welcome" rows="3" maxlength="1000" required></textarea>
+              <small>建群并核对成员后，助手会在新群发出这段话。</small>
+            </div>
+            <details class="analysis-panel">
+              <summary>测试触发条件</summary>
+              <div class="analysis-content">
+                <div class="field">
+                  <label for="group-test-message">测试用的客户消息</label>
+                  <textarea id="group-test-message" rows="3" maxlength="2800" placeholder="例如：我想做一套新办公室的设计，请安排顾问跟我对接。"></textarea>
+                </div>
+                <div class="form-actions">
+                  <button type="button" class="btn sm" id="group-test">测试判断</button>
+                  <span class="small" id="group-test-feedback" role="status"></span>
+                </div>
+                <div class="preview-result" id="group-test-result" hidden>
+                  <strong id="group-test-title"></strong><p id="group-test-welcome"></p>
+                </div>
+              </div>
+            </details>
+            <div class="form-actions"><button class="btn primary" id="save-group" type="submit">保存建群设置</button><span class="local-status small" id="group-feedback" role="status"></span></div>
+          </div>
+        </form>
+        <div class="card">
+          <div class="card-head form-head">
+            <div><h2 id="contact-title">从微信通讯录选择</h2><p class="small" id="contact-instruction">先添加客户，再为每位客户指定一位对接人。</p></div>
+            <button class="btn sm" type="button" id="cancel-adviser" hidden>取消选择</button>
+          </div>
+          <div class="panel-body">
+            <form id="contact-form" class="inline contact-search">
+              <input class="input" id="contact-query" type="search" aria-label="搜索联系人" placeholder="输入联系人昵称或备注" maxlength="100" required>
+              <button class="btn" id="contact-search" type="submit">搜索</button>
+            </form>
+            <p class="small" id="contact-feedback" role="status"></p>
+            <div id="contact-results"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section data-panel="knowledge" class="history-library" hidden>
+      <div class="card knowledge-history">
+        <div class="knowledge-history-info">
+          <h2>微信历史整理</h2>
+          <p class="local-status small" id="learning-status" role="status">正在读取设置</p>
+          <div class="history-loading" id="history-loading" role="status" hidden>
+            <span class="history-spinner" aria-hidden="true"></span>
+            <div><strong id="history-loading-label"></strong><p class="small local-status" id="history-loading-counts"></p></div>
+          </div>
+          <details class="knowledge-scope small"><summary>整理范围</summary><p>当前微信在本机可读的文字聊天会分批交给已配置的 AI。常见号码、邮箱和链接会遮盖。整理在后台运行，完成后会通知你。</p></details>
+        </div>
+        <div class="form-actions">
+          <button class="btn primary" type="button" id="learn-history" disabled>整理全部文字历史</button>
+          <button class="btn" type="button" id="cancel-learning" hidden>停止整理</button>
+          <button class="btn" type="button" id="restore-history" hidden>恢复上一版</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="knowledge-tabs" role="tablist" aria-label="知识库内容">
+          <button class="btn" type="button" role="tab" id="knowledge-cards-tab" aria-controls="knowledge-cards-panel" aria-selected="true">知识卡片</button>
+          <button class="btn" type="button" role="tab" id="knowledge-tone-tab" aria-controls="knowledge-tone-panel" aria-selected="false" tabindex="-1">回复语气</button>
+          <button class="btn" type="button" role="tab" id="knowledge-files-tab" aria-controls="knowledge-files-panel" aria-selected="false" tabindex="-1">资料文件</button>
+        </div>
+        <div class="panel-body" id="knowledge-cards-panel" role="tabpanel" aria-labelledby="knowledge-cards-tab">
+          <div class="knowledge-tools">
+            <form id="search-history-cards" class="history-card-search">
+              <input class="input" type="search" id="history-card-query" maxlength="100" aria-label="查找知识卡片" placeholder="搜索标题、触发词或内容">
+              <button class="btn" type="submit">搜索</button>
+            </form>
+            <small>启用的卡片仅用于 AI 回复。</small>
+          </div>
+          <div class="history-card-list" id="history-card-table" hidden>
+            <div class="history-card-head" aria-hidden="true"><span class="card-title-cell">卡片标题</span><span class="card-trigger-cell">触发词</span><span class="card-use-cell">状态</span></div>
+            <div id="history-card-list"></div>
+          </div>
+          <p class="local-status small" id="history-card-feedback" role="status"></p>
+          <div class="knowledge-pagination" id="history-card-pagination" hidden>
+            <button class="btn sm" type="button" id="previous-history-cards">上一页</button>
+            <span class="small" id="history-card-page" role="status"></span>
+            <button class="btn sm" type="button" id="more-history-cards">下一页</button>
+          </div>
+        </div>
+        <div class="panel-body knowledge-narrow" id="knowledge-tone-panel" role="tabpanel" aria-labelledby="knowledge-tone-tab" hidden>
+          <form class="tone-fields" id="learned-tone-form">
+            <div class="field">
+              <label class="choice"><input type="checkbox" id="mimic-tone" aria-describedby="mimic-tone-hint">模仿我的回复语气</label>
+              <small id="mimic-tone-hint">开启后，AI 回复会参考下方的语气。</small>
+            </div>
+            <fieldset><legend>常用语气</legend><div class="inline" id="tone-options">
+              <button type="button" class="btn" data-tone="亲切专业" aria-pressed="true">亲切专业</button>
+              <button type="button" class="btn" data-tone="简洁直接" aria-pressed="false">简洁直接</button>
+              <button type="button" class="btn" data-tone="正式稳重" aria-pressed="false">正式稳重</button>
+            </div></fieldset>
+            <div class="field"><label for="tone">基础语气</label><input class="input" id="tone" maxlength="36" required></div>
+            <div class="field"><label for="learned-tone">历史表达习惯</label><textarea id="learned-tone" rows="6" maxlength="1200" placeholder="整理历史后会填入这里，也可以直接填写。"></textarea></div>
+            <div class="form-actions"><button class="btn primary" type="submit" id="save-learned-tone" disabled>保存语气</button><span class="local-status small" id="learned-tone-feedback" role="status"></span></div>
+          </form>
+          <details class="analysis-panel" id="history-style">
+              <summary>从指定会话分析语气</summary>
+              <div class="analysis-content">
+                <p class="small">最多选 20 个会话。每个会话最多读取你发出的最近 30 条文字。</p>
+                <div class="field">
+                  <label for="style-query">查找会话</label>
+                  <input class="input" id="style-query" type="search" placeholder="按昵称、备注或群名搜索">
+                  <div class="inline">
+                    <button class="btn sm" type="button" id="style-select-recent" disabled>选最近 20 个单聊</button>
+                    <button class="btn sm" type="button" id="style-clear" disabled>清空选择</button>
+                  </div>
+                  <div class="choices" id="style-chats" role="group" aria-label="可分析的会话"><span class="small">正在读取会话</span></div>
+                  <small id="style-count" aria-live="polite">已选 0 / 20</small>
+                  <div><button class="btn sm" type="button" id="style-retry" hidden>重试读取会话</button></div>
+                </div>
+                <fieldset>
+                  <legend>取样时间</legend>
+                  <div class="inline">
+                    <label class="choice"><input type="radio" name="style-days" value="7">近 7 天</label>
+                    <label class="choice"><input type="radio" name="style-days" value="30">近 30 天</label>
+                    <label class="choice"><input type="radio" name="style-days" value="90" checked>近 90 天</label>
+                  </div>
+                </fieldset>
+                <div class="field">
+                  <label class="choice"><input type="checkbox" id="style-model" aria-describedby="style-model-info">用已配置的模型补充分析</label>
+                  <small id="style-model-info">勾选后，每个会话最多提交 5 条你发出的抽样文字。程序会遮盖常见手机号、邮箱和链接。</small>
+                </div>
+                <div class="form-actions">
+                  <button type="button" id="analyze-style" class="btn primary">分析历史回复</button>
+                  <span class="local-status small" id="style-feedback" role="status"></span>
+                </div>
+                <div id="style-result" class="preview-result analysis-result" hidden>
+                  <h3 id="style-result-title" tabindex="-1">分析结果</h3>
+                  <small id="style-result-count"></small>
+                  <ul id="style-summary" class="style-summary"></ul>
+                  <div class="field">
+                    <strong>建议的历史表达习惯</strong>
+                    <p class="operation-text" id="style-suggestion"></p>
+                  </div>
+                  <button type="button" id="apply-style" class="btn">填入语气编辑框</button>
+                </div>
+              </div>
+            </details>
+        </div>
+        <div class="panel-body" id="knowledge-files-panel" role="tabpanel" aria-labelledby="knowledge-files-tab" hidden>
+          <details class="knowledge-upload">
+            <summary>上传资料</summary>
+            <form class="panel-body knowledge-narrow" id="upload-form">
+              <div class="field"><label for="file">选择文件</label><input id="file" type="file" accept=".txt,.md,.csv,.docx,.pdf" required><small>支持 TXT、Markdown、CSV、Word 和 PDF，单份最多 8 MB。</small></div>
+              <div class="field">
+                <label for="knowledge-triggers">触发词（可选）</label>
+                <input class="input" id="knowledge-triggers" maxlength="180" placeholder="例如退款、退货、售后">
+                <small>用逗号或顿号分隔。命中任一词时用于 AI 回复，留空时按内容匹配。</small>
+              </div>
+              <div class="form-actions"><button class="btn primary" id="upload-button" type="submit">上传</button><span class="local-status small" id="file-feedback" role="status"></span></div>
+            </form>
+          </details>
+          <p class="small" id="file-count" role="status">正在读取资料</p>
+          <div id="files"></div>
+        </div>
+      </div>
+    </section>
+    </main>
+  </div>
+</div>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const skipLink = $("skip-link");
+document.addEventListener("keydown", event => {
+  if (event.key !== "Tab") return;
+  if (document.activeElement === skipLink && !skipLink.hasAttribute("data-keyboard") && !event.shiftKey) {
+    event.preventDefault();
+  }
+  skipLink.setAttribute("data-keyboard","");
+},true);
+document.addEventListener("pointerdown",() => skipLink.removeAttribute("data-keyboard"),true);
+const privacy = new URLSearchParams(location.search).get("private") === "1";
+const pages = {setup:"首页", operations:"运行记录", reply:"回复设置", ai:"AI 配置", group:"建群设置", knowledge:"知识库"};
+const sidebarOnDesktop = window.matchMedia("(min-width:48rem)");
+let currentView = "setup";
+const openViews = ["setup"];
+let conversations = [], styleConversationsLoaded = false, styleConversationsLoading = false;
+let recordKind = "reply", nextRecord = null, recordTicket = 0, recordLoading = false, readingOlderRecords = false;
+let customers = [], contacts = [], modelHasKey = null;
+let adviserTarget = null, contactQueryTicket = 0, localAccountId = "";
+let replyTargets = [], replyContacts = [];
+let replyTagSelection = new Set(), replyTagDirectory = null;
+let settingsReady = false;
+let setupStep = 0, setupAccount = null, setupContact = null, setupSavedModelUrl = "";
+const editingModelKeys = new Set();
+let installedVersion = "", availableUpdate = null, versionCheckState = "";
+let updateRunning = false;
+let updateCheckId = 0;
+const styleChats = new Set();
+const maxStyleChats = 20;
+const systemStyleAccounts = new Set(["filehelper","weixin","fmessage","medianote","newsapp","brandsessionholder",
+  "notifymessage","weixinreminder","appbrandcustomerservicemsg"]);
+
+function element(tag, className, value) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (value !== undefined) node.textContent = value;
+  return node;
+}
+function note(id, message, isError = false) {
+  $(id).textContent = message;
+  $(id).classList.toggle("error", isError);
+}
+function action(label, className, callback) {
+  const button = element("button", className, label);
+  button.type = "button";
+  button.addEventListener("click", callback);
+  return button;
+}
+async function request(path, options) {
+  const response = await fetch(path, options);
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || "请求失败，请重试。");
+  return payload;
+}
+function jsonRequest(path, method, data) {
+  return request(path, {method, headers:{"Content-Type":"application/json"}, body:JSON.stringify(data)});
+}
+async function pending(button, label, callback) {
+  if (button.disabled) return;
+  const previous = button.textContent;
+  button.textContent = label;
+  button.disabled = true;
+  button.setAttribute("aria-busy","true");
+  try { return await callback(); }
+  finally {
+    button.textContent = previous;
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+  }
+}
+function setSidebar(open) {
+  const desktop = sidebarOnDesktop.matches;
+  if (desktop) $("shell").dataset.side = open ? "expanded" : "compact";
+  $("shell").dataset.mobileMenu = !desktop && open ? "open" : "closed";
+  const drawerOpen = !desktop && open;
+  $("drawer-shade").hidden = !drawerOpen;
+  $("workspace-shell").inert = drawerOpen;
+  $("skip-link").inert = drawerOpen;
+  if (drawerOpen) {
+    $("sidebar").setAttribute("role","dialog");
+    $("sidebar").setAttribute("aria-modal","true");
+  } else {
+    $("sidebar").removeAttribute("role");
+    $("sidebar").removeAttribute("aria-modal");
+  }
+  $("menu-toggle").setAttribute("aria-expanded",String(open));
+  $("menu-toggle").setAttribute("aria-label",open ? "收起菜单" : "显示菜单");
+}
+function closeDrawer(moveFocus = true) {
+  if (sidebarOnDesktop.matches || $("shell").dataset.mobileMenu !== "open") return;
+  setSidebar(false);
+  if (moveFocus) $("menu-toggle").focus();
+}
+$("menu-toggle").addEventListener("click",() => {
+  const open = $("menu-toggle").getAttribute("aria-expanded") !== "true";
+  setSidebar(open);
+  if (open && !sidebarOnDesktop.matches) $("sidebar-close").focus();
+});
+$("sidebar-close").addEventListener("click",() => closeDrawer());
+$("drawer-shade").addEventListener("click",() => closeDrawer());
+sidebarOnDesktop.addEventListener("change",() => {
+  const active = document.activeElement;
+  const releasedDrawerFocus = active === $("sidebar-close") ||
+    (!sidebarOnDesktop.matches && $("sidebar").contains(active));
+  setSidebar(sidebarOnDesktop.matches && $("shell").dataset.side === "expanded");
+  if (releasedDrawerFocus) $("menu-toggle").focus();
+});
+setSidebar(sidebarOnDesktop.matches);
+
+function renderWorkspaceTabs(focusTab = false) {
+  let active;
+  const tabs = openViews.map(view => {
+    const item = element("li","workspace-tab" + (view === currentView ? " selected" : ""));
+    const tab = action(pages[view],"",() => show(view,true));
+    if (view === currentView) {
+      active = tab;
+      tab.setAttribute("aria-current","page");
+    }
+    item.append(tab);
+    if (view !== "setup") {
+      const close = action("×","tab-close",() => closeWorkspaceTab(view));
+      close.setAttribute("aria-label","关闭" + pages[view] + "页签");
+      item.append(close);
+    }
+    return item;
+  });
+  $("workspace-tabs").replaceChildren(...tabs);
+  if (focusTab && active) active.focus({preventScroll:true});
+  if (active) active.scrollIntoView({block:"nearest",inline:"nearest"});
+}
+function closeWorkspaceTab(view) {
+  const index = openViews.indexOf(view);
+  openViews.splice(index,1);
+  if (view === currentView) show(openViews[index - 1] || "setup",true);
+  else renderWorkspaceTabs(true);
+}
+function show(view, focusTab = false) {
+  if (!Object.hasOwn(pages, view)) view = "setup";
+  currentView = view;
+  $("workspace-shell").dataset.currentView = view;
+  if (!openViews.includes(view)) openViews.push(view);
+  document.querySelectorAll("[data-panel]").forEach(panel => { panel.hidden = panel.dataset.panel !== view; });
+  document.querySelectorAll("[data-view]").forEach(button => {
+    if (button.dataset.view === view) button.setAttribute("aria-current","page");
+    else button.removeAttribute("aria-current");
+  });
+  $("main").setAttribute("aria-label",pages[view]);
+  note("current-location",pages[view]);
+  history.replaceState(null, "", "#" + view);
+  renderWorkspaceTabs(focusTab);
+  paintHistoryActivity();
+  if (view === "knowledge") {
+    refreshHistoryLearning();
+    if (!historyCardsLoaded) loadHistoryCards();
+  }
+}
+document.querySelectorAll("[data-view]").forEach(button => button.addEventListener("click", () => {
+  const mobile = !sidebarOnDesktop.matches;
+  closeDrawer(false);
+  show(button.dataset.view);
+  if (mobile) $("main").focus({preventScroll:true});
+}));
+window.addEventListener("hashchange", () => {
+  if (location.hash !== "#main") show(location.hash.slice(1));
+});
+document.addEventListener("click",event => {
+  if (!$("account-menu").contains(event.target)) $("account-menu").open = false;
+});
+document.addEventListener("keydown",event => {
+  if (event.key !== "Escape") return;
+  if ($("shell").dataset.mobileMenu === "open") {
+    closeDrawer();
+  } else if ($("account-menu").open) {
+    $("account-menu").open = false;
+    $("account-toggle").focus();
+  }
+});
+$("refresh-account").addEventListener("click",() => pending($("refresh-account"),"正在检查",loadStatus));
+let updateDialogTrigger = $("version-button");
+$("version-button").addEventListener("click",() => {
+  closeDrawer(false);
+  updateDialogTrigger = sidebarOnDesktop.matches ? $("version-button") : $("menu-toggle");
+  $("update-dialog").showModal();
+});
+$("update-dialog").addEventListener("close",() => {
+  (updateDialogTrigger.getClientRects().length ? updateDialogTrigger : $("menu-toggle")).focus();
+});
+$("check-update").addEventListener("click",() => pending($("check-update"),"正在检查",() => checkUpdate(true)));
+$("account-check-update").addEventListener("click",() => {
+  $("account-menu").open = false;
+  updateDialogTrigger = $("account-toggle");
+  $("update-dialog").showModal();
+  $("check-update").click();
+});
+$("install-update").addEventListener("click",() => {
+  if (!availableUpdate?.canInstall || updateRunning) return;
+  const target = availableUpdate.version;
+  pending($("install-update"),"正在更新",async () => {
+    updateRunning = true;
+    showUpdateProgress("正在下载并校验新版");
+    try {
+      await jsonRequest("/api/update/install","POST",{version:target});
+      showUpdateProgress("新版已下载，正在重启工作台");
+      await waitForUpdate(target);
+    } catch(error) {
+      showUpdateProgress(error.message,true);
+    } finally {
+      updateRunning = false;
+    }
+  });
+});
+function showUpdateProgress(message, isError = false) {
+  note("update-progress",message,isError);
+  $("update-progress").hidden = !message;
+}
+function paintVersionControl() {
+  const current = installedVersion ? "当前版本 v" + installedVersion : "读取当前版本";
+  const latest = availableUpdate ? "最新版本 v" + availableUpdate.version : "";
+  const state = availableUpdate ? "available" : versionCheckState === "current" ? "current"
+    : versionCheckState === "unconfigured" ? "local" : "unknown";
+  const stateLabels = {current:"已是最新版本",local:"未配置更新源",unknown:"尚未确认是否为最新版本"};
+  const summary = latest || stateLabels[state];
+  const button = $("version-button");
+  note("version-label",availableUpdate ? "新版 v" + availableUpdate.version : installedVersion ? "v" + installedVersion : "版本");
+  $("version-dot").hidden = !(installedVersion || availableUpdate);
+  button.dataset.updateStatus = state;
+  button.title = current + "，" + summary;
+  button.setAttribute("aria-label", button.title);
+  note("installed-version",current);
+  note("latest-version",latest);
+  $("latest-version").hidden = !latest;
+}
+async function loadInstalledVersion() {
+  try {
+    const status = await request("/api/update/status");
+    if (!installedVersion && status.current) {
+      installedVersion = status.current;
+      paintVersionControl();
+    }
+  } catch { /* The update check can also supply the installed version. */ }
+}
+async function checkUpdate(manual = false) {
+  if (updateRunning) return;
+  const ticket = ++updateCheckId;
+  if (manual) note("update-check-info","正在检查更新");
+  try {
+    const status = await request("/api/update" + (manual ? "?force=1" : ""));
+    if (ticket !== updateCheckId || updateRunning) return;
+    const update = status.state === "available";
+    installedVersion = status.current || installedVersion;
+    availableUpdate = update ? status : null;
+    versionCheckState = status.state;
+    paintVersionControl();
+    $("install-update").hidden = !update;
+    $("install-update").disabled = update && !status.canInstall;
+    note("update-notes",update ? status.notes || "" : "");
+    $("update-notes").hidden = !update || !status.notes;
+    note("update-check-info",update ? "" : status.message || "", status.state === "error");
+    if (update) {
+      const failed = status.result?.state === "failed" && status.result.version === status.version;
+      showUpdateProgress(status.canInstall
+        ? (failed ? "上次升级启动失败，工作台已恢复到上一版。" : "")
+        : "请用新版 Start.cmd 启动工作台后更新。",failed);
+    } else showUpdateProgress("");
+  } catch(error) {
+    if (ticket === updateCheckId) note("update-check-info",error.message || "暂时无法检查更新。",true);
+  }
+}
+async function waitForUpdate(target) {
+  const deadline = Date.now() + 90000;
+  while (Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve,1200));
+    let state;
+    try { state = await request("/api/update/status"); }
+    catch { continue; }
+    if (state.current === target) {
+      location.reload();
+      return;
+    }
+    if (state.result?.state === "failed" && state.result.version === target) {
+      throw new Error("新版启动失败，工作台已返回上一版。");
+    }
+  }
+  throw new Error("工作台暂未重新连上。请从桌面启动入口重新打开查看版本。");
+}
+
+
+const automationLabels = {
+  starting:"正在启动", running:"运行中", paused:"等待微信前台", stopped:"未启动",
+  workbench_paused:"已暂停",
+  background:"后台接收中", reply_pending:"有消息待核对",
+  disconnected:"微信未连接", configuration_required:"待补充配置", component_missing:"缺少运行组件",
+  offline:"状态失联", error:"异常", unknown:"状态未知"
+};
+const savedAutomation = {reply:null,group:null};
+const liveAutomation = {reply:"unknown",group:"unknown"};
+let automationPaused = null;
+let automationRequest = 0;
+function paintAutomationToggle() {
+  const button = $("automation-toggle");
+  if (button.hasAttribute("aria-busy")) return;
+  button.disabled = automationPaused === null;
+  button.textContent = automationPaused ? "恢复自动化" : "暂停自动化";
+}
+function paintAutomationStatus(kind) {
+  const indicator = $(kind + "-indicator");
+  let state = liveAutomation[kind];
+  if (!Object.hasOwn(automationLabels,state)) state = "unknown";
+  if (state === "stopped" && savedAutomation[kind]) state = "starting";
+  const wanted = $(kind + "-enabled").checked;
+  const pendingChange = savedAutomation[kind] !== null && wanted !== savedAutomation[kind];
+  const label = automationLabels[state] + (pendingChange ? (wanted ? " · 开启待保存" : " · 关闭待保存") : "");
+  indicator.dataset.state = state;
+  if (indicator.querySelector("b").textContent !== label) indicator.querySelector("b").textContent = label;
+  indicator.title = state === "workbench_paused" ? "微信窗口操作已暂停。"
+    : state === "paused" ? "把已登录的电脑版微信切到前台后开始监听。"
+    : state === "reply_pending" ? "微信回到前台后会核对并回复。" : "";
+}
+function applyAutomationStatus(status) {
+  automationPaused = typeof status.paused === "boolean" ? status.paused : null;
+  Object.assign(liveAutomation,status);
+  paintAutomationToggle();
+  paintAutomationStatus("reply");
+  paintAutomationStatus("group");
+}
+async function loadAutomationStatus() {
+  const ticket = ++automationRequest;
+  try {
+    const status = await request("/api/automation-status");
+    if (ticket !== automationRequest) return;
+    applyAutomationStatus(status);
+  } catch {
+    if (ticket !== automationRequest) return;
+    if (automationPaused === null) applyAutomationStatus({reply:"unknown",group:"unknown"});
+  }
+}
+$("automation-toggle").addEventListener("click",async () => {
+  const paused = !automationPaused;
+  await pending($("automation-toggle"),paused ? "正在暂停" : "正在恢复",async () => {
+    note("automation-feedback","");
+    try {
+      const status = await jsonRequest("/api/automation-pause","PUT",{paused});
+      ++automationRequest;
+      applyAutomationStatus(status);
+    } catch (error) {
+      await loadAutomationStatus();
+      note("automation-feedback",error.message || "操作未完成，请重试。",true);
+    }
+  });
+  paintAutomationToggle();
+});
+for (const kind of ["reply","group"]) {
+  $(kind + "-enabled").addEventListener("change",() => paintAutomationStatus(kind));
+}
+
+
+async function loadStatus() {
+  try {
+    applyAccountStatus(await request("/api/status"));
+  } catch (error) {
+    if (modelHasKey === null) {
+      modelHasKey = false;
+      describeModel();
+      renderSetupKeyHint();
+    }
+    $("account").dataset.ready = "false";
+    note("account-name","微信状态未知");
+    $("account-toggle").title = "微信状态未知";
+    note("account-avatar","微");
+    note("account-title","连接状态读取失败",true);
+    note("account-info",error.message,true);
+    $("setup-account").dataset.ready = "false";
+    note("setup-account","暂时无法检查微信状态。",true);
+  }
+}
+function applyAccountStatus(data) {
+    setupAccount = data;
+    const found = data.windows > 0;
+    const nickname = found && data.accounts.length === 1 ? data.accounts[0] : "";
+    const userLabel = found ? (privacy ? "微信账号" : nickname || "微信账号") : "微信未连接";
+    $("account").dataset.ready = String(found);
+    note("account-name",userLabel);
+    $("account-toggle").title = userLabel;
+    note("account-avatar",nickname && !privacy ? nickname.match(/[\p{L}\p{N}]/u)?.[0] || "微" : "微");
+    note("account-title",found ? "微信已登录" : data.profile ? "本机资料可用" : "未识别到登录");
+    note("account-info",found
+      ? (privacy ? "账号已隐藏" : nickname ? "当前微信昵称 · " + nickname : "已检测到 " + data.windows + " 个微信窗口")
+      : data.profile ? (privacy ? "本机资料账号已隐藏" : "本机资料账号 · " + data.profile) : "请在电脑版微信登录");
+    modelHasKey = data.modelKeyPresent;
+    localAccountId = data.profile || "";
+    describeModel();
+    const ready = data.windows === 1 && Boolean(nickname);
+    $("setup-account").dataset.ready = String(ready);
+    note("setup-account",ready ? "已识别 " + (privacy ? "当前微信" : nickname)
+      : data.windows > 1 ? "请只保留一个已登录的电脑版微信。"
+      : found ? "微信已登录，请点「识别微信」获取昵称。"
+      : "请打开电脑版微信并完成登录。");
+    renderSetupKeyHint();
+}
+function describeModel() {
+  const existing = configuredModelKey($("model-url").value);
+  renderModelKey("reply",existing);
+  if (modelHasKey === null) {
+    note("model-status","正在检查 AI Key");
+  } else if (!$("model-url").value || !$("model-name").value) {
+    note("model-status","未配置模型时，试写使用本地示例。");
+  } else {
+    note("model-status",existing
+      ? editingModelKeys.has("reply") ? "输入新的 Key，再点「保存 AI 配置」。" : ""
+      : "请输入模型服务的 AI Key。本地免密模型可留空。");
+  }
+}
+function normalizedModelUrl(value) { return value.trim().replace(/\/+$/,""); }
+function configuredModelKey(value) {
+  const url = normalizedModelUrl(value);
+  return Boolean(modelHasKey && url && url === normalizedModelUrl(setupSavedModelUrl));
+}
+function renderModelKey(prefix, existing) {
+  const field = $(prefix + "-api-key");
+  const editing = editingModelKeys.has(prefix) || Boolean(field.value);
+  $(prefix + "-key-saved").hidden = !existing || editing;
+  $(prefix + "-key-editor").hidden = !editing && (existing || modelHasKey === null);
+  $(prefix + "-key-cancel").hidden = !existing || !editing;
+  $(prefix + "-key-show").disabled = !field.value;
+}
+function resetModelKey(prefix) {
+  const field = $(prefix + "-api-key");
+  field.value = "";
+  field.type = "password";
+  $(prefix + "-key-show").textContent = "显示";
+  editingModelKeys.delete(prefix);
+}
+for (const [prefix,refresh] of [["setup",renderSetupKeyHint],["reply",describeModel]]) {
+  const field = $(prefix + "-api-key");
+  const show = $(prefix + "-key-show");
+  field.addEventListener("input",refresh);
+  $(prefix + "-key-change").addEventListener("click",() => {
+    editingModelKeys.add(prefix);
+    refresh();
+    field.focus();
+  });
+  $(prefix + "-key-cancel").addEventListener("click",() => {
+    resetModelKey(prefix);
+    refresh();
+    $(prefix + "-key-change").focus();
+  });
+  show.addEventListener("click",() => {
+    const revealed = field.type === "password";
+    field.type = revealed ? "text" : "password";
+    show.textContent = revealed ? "隐藏" : "显示";
+  });
+}
+function setupMode() { return document.querySelector('input[name="setup-mode"]:checked').value; }
+function renderSetupKeyHint() {
+  const existing = configuredModelKey($("setup-model-url").value);
+  renderModelKey("setup",existing);
+  note("setup-key-hint",modelHasKey === null ? "正在检查 AI Key" : existing
+    ? editingModelKeys.has("setup") ? "填写新的 Key，完成配置后保存。" : ""
+    : "填写模型服务提供的 Key，保存在本机。");
+  return existing;
+}
+function renderSetupMode() {
+  const model = setupMode() === "model";
+  $("setup-fixed-fields").hidden = model;
+  $("setup-ai-fields").hidden = !model;
+  $("setup-history-index").hidden = !model;
+  $("setup-history-fields").hidden = !model;
+  $("setup-enter-reply").classList.toggle("primary",!model);
+  renderSetupKeyHint();
+}
+function setupModelFields() {
+  return {baseUrl:$("setup-model-url").value,model:$("setup-model-name").value,apiKey:$("setup-api-key").value};
+}
+function showSetupStep(step, focus = true) {
+  setupStep = step;
+  document.querySelectorAll("[data-setup-step]").forEach(panel => panel.hidden = Number(panel.dataset.setupStep) !== step);
+  document.querySelectorAll("[data-setup-index]").forEach(item => {
+    if (Number(item.dataset.setupIndex) === step) item.setAttribute("aria-current","step");
+    else item.removeAttribute("aria-current");
+  });
+  $("setup-controls").hidden = step === 3;
+  $("setup-back").hidden = step === 0;
+  $("setup-forward").textContent = step === 2 ? "完成配置" : "下一步";
+  note("setup-feedback","");
+  paintHistoryActivity();
+  if (focus) document.querySelector('[data-setup-step="' + step + '"] h3').focus();
+}
+function renderSetupContact() {
+  note("setup-contact-selection",setupContact ? "已选 " + setupContact.name +
+    (setupContact.tail ? "（末四位 " + setupContact.tail + "）" : "") : "请选择一个测试联系人。");
+}
+function loadSetupFields(reply) {
+  setupSavedModelUrl = reply.baseUrl;
+  $("setup-fixed").value = reply.fixedText;
+  $("setup-model-url").value = reply.baseUrl;
+  $("setup-model-name").value = reply.model;
+  $("setup-mimic").checked = Boolean((reply.setupComplete || reply.model) && reply.mimicTone);
+  document.querySelector('input[name="setup-mode"][value="' + (reply.mode === "model" ? "model" : "fixed") + '"]').checked = true;
+  setupContact = reply.testContact || (reply.targets?.length === 1 ? reply.targets[0] : null);
+  if (setupContact) $("setup-contact-query").value = setupContact.name;
+  renderSetupContact();
+  renderSetupMode();
+  if (reply.setupComplete && setupContact) {
+    note("setup-complete-info","测试联系人为 " + setupContact.name + "。可在回复设置中开启或调整自动回复。");
+    showSetupStep(3,false);
+  }
+}
+const setupNotify = (message,error = false) => note("setup-feedback",message,error);
+$("setup-open-wechat").addEventListener("click",() => pending($("setup-open-wechat"),"正在打开",async () => {
+  try {
+    await jsonRequest("/api/setup/wechat/open","POST",{});
+    setupNotify("登录完成后，点「识别微信」。");
+  } catch(error) { setupNotify(error.message,true); }
+}));
+$("setup-detect-wechat").addEventListener("click",() => pending($("setup-detect-wechat"),"正在识别",async () => {
+  try {
+    applyAccountStatus(await jsonRequest("/api/setup/wechat/check","POST",{}));
+    setupNotify("");
+  } catch(error) { setupNotify(error.message,true); }
+}));
+$("setup-back").addEventListener("click",() => showSetupStep(setupStep - 1));
+$("setup-restart").addEventListener("click",() => showSetupStep(0));
+$("setup-model-url").addEventListener("input",renderSetupKeyHint);
+document.querySelectorAll('input[name="setup-mode"]').forEach(input => input.addEventListener("change",renderSetupMode));
+$("setup-contact-query").addEventListener("keydown",event => {
+  if (event.key !== "Enter" || event.isComposing) return;
+  event.preventDefault();
+  $("setup-find-contact").click();
+});
+$("setup-find-contact").addEventListener("click",() => {
+  const query = $("setup-contact-query").value.trim();
+  if (!query) {
+    setupNotify("请输入测试微信昵称或备注。",true);
+    $("setup-contact-query").focus();
+    return;
+  }
+  pending($("setup-find-contact"),"正在搜索",async () => {
+    try {
+      const contacts = await request("/api/contacts?setup=1&q=" + encodeURIComponent(query));
+      $("setup-contact-results").replaceChildren(...contacts.map(contact => {
+        const row = element("div","detail-row");
+        const name = contact.name + (contact.tail ? " · 末四位 " + contact.tail : "");
+        const pick = action("选用","btn sm",() => {
+          setupContact = contact;
+          renderSetupContact();
+          $("setup-contact-results").replaceChildren();
+          $("setup-forward").focus();
+          setupNotify("");
+        });
+        pick.setAttribute("aria-label","选用 " + name);
+        row.append(element("span","",name),pick);
+        return row;
+      }));
+      setupNotify(contacts.length ? "" : "没有找到联系人，请检查昵称或微信备注。");
+    } catch(error) { setupNotify(error.message,true); }
+  });
+});
+$("setup-form").addEventListener("submit",event => {
+  event.preventDefault();
+  if (!settingsReady) return;
+  const requireField = (id,message) => {
+    if ($(id).value.trim()) return true;
+    setupNotify(message,true);
+    $(id).focus();
+    return false;
+  };
+  if (setupStep === 0) {
+    if (setupAccount?.windows !== 1 || setupAccount.accounts?.length !== 1) {
+      setupNotify("请先登录并识别当前微信。",true);
+      $("setup-detect-wechat").focus();
+      return;
+    }
+    showSetupStep(1);
+  } else if (setupStep === 1) {
+    if (setupMode() === "fixed") {
+      if (!requireField("setup-fixed","请填写固定回复。")) return;
+    } else {
+      if (!requireField("setup-model-url","请填写模型接口地址。") ||
+          !requireField("setup-model-name","请填写模型名称。")) return;
+      if (!$("setup-model-url").validity.valid) {
+        setupNotify("请填写完整的模型接口地址。",true);
+        $("setup-model-url").focus();
+        return;
+      }
+      if (!renderSetupKeyHint() && !requireField("setup-api-key","请填写 AI Key。")) return;
+    }
+    showSetupStep(2);
+  } else if (setupStep === 2) {
+    if (!setupContact) {
+      setupNotify("请先选一个测试微信联系人。",true);
+      $("setup-contact-query").focus();
+      return;
+    }
+    pending($("setup-forward"),"正在保存",async () => {
+      try {
+        const mode = setupMode();
+        const fields = mode === "fixed" ? {fixedText:$("setup-fixed").value} :
+          {...setupModelFields(),mimicTone:$("setup-mimic").checked};
+        await jsonRequest("/api/setup","PUT",{...fields,mode,testContact:setupContact});
+        resetModelKey("setup");
+        await Promise.all([loadSettings(),loadStatus()]);
+        showSetupStep(3);
+        void refreshHistoryLearning();
+      } catch(error) { setupNotify(error.message,true); }
+    });
+  }
+});
+
+function renderOperation(item, kind) {
+  const record = element("li");
+  const heading = element("div","operation-heading");
+  const date = element("time","small",new Intl.DateTimeFormat("zh-CN",{dateStyle:"medium",timeStyle:"short"})
+    .format(new Date(item.completedAt)));
+  date.dateTime = item.completedAt;
+  const name = kind === "reply" ? item.recipient : item.groupName;
+  heading.append(element("strong","",privacy ? (kind === "reply" ? "接收方已隐藏" : "群名已隐藏") : name),date);
+  const copy = kind === "reply"
+    ? (privacy ? "回复内容已隐藏" : item.reply)
+    : (privacy ? "已隐藏 " + item.members.length + " 位成员" :
+      item.members.length ? "成员 · " + item.members.join("、") : "未收到成员明细");
+  record.append(heading,element("p","operation-text",copy));
+  if (kind === "group" && item.welcomeStatus) {
+    const status = item.welcomeStatus === "completed" ? "群内欢迎语已发送" :
+      item.welcomeStatus === "welcomeFailed" ? "群内欢迎语未确认" : "群内欢迎语待确认";
+    record.append(element("p","small",status));
+  }
+  return record;
+}
+async function loadOperationRecords(append = false, quiet = false) {
+  if (append && !nextRecord) return;
+  const ticket = ++recordTicket;
+  const kind = recordKind;
+  recordLoading = true;
+  if (!quiet) note("record-count","正在读取运行记录");
+  try {
+    const query = "?kind=" + kind + (append ? "&before=" + nextRecord : "");
+    const result = await request("/api/operation-records" + query);
+    if (ticket !== recordTicket) return;
+    const nodes = result.items.map(item => renderOperation(item,kind));
+    if (append) {
+      $("operation-list").append(...nodes);
+      readingOlderRecords = true;
+    } else {
+      $("operation-list").replaceChildren(...nodes);
+    }
+    nextRecord = result.nextBefore;
+    $("more-records").hidden = !nextRecord;
+    const total = $("operation-list").childElementCount;
+    $("record-empty").hidden = total > 0;
+    note("record-count",total ? "显示 " + total + " 条成功记录" : (kind === "reply" ? "自动回复" : "建群"));
+    note("record-empty-title",kind === "reply" ? "暂无自动回复记录" : "暂无建群记录");
+    note("record-empty-text",kind === "reply" ? "助手成功发出的自动回复会显示在这里。" : "助手成功创建的群和成员名单会显示在这里。");
+  } catch(error) {
+    if (ticket === recordTicket) note("record-count",error.message || "暂时无法读取运行记录。",true);
+  } finally {
+    if (ticket === recordTicket) recordLoading = false;
+  }
+}
+document.querySelectorAll("[data-record-kind]").forEach(button => button.addEventListener("click",() => {
+  if (recordKind === button.dataset.recordKind) return;
+  recordKind = button.dataset.recordKind;
+  readingOlderRecords = false;
+  nextRecord = null;
+  $("operation-list").replaceChildren();
+  $("record-empty").hidden = true;
+  $("more-records").hidden = true;
+  document.querySelectorAll("[data-record-kind]").forEach(item => item.setAttribute("aria-pressed",String(item === button)));
+  loadOperationRecords();
+}));
+$("refresh-records").addEventListener("click",() => pending($("refresh-records"),"正在刷新",() => {
+  readingOlderRecords = false;
+  return loadOperationRecords();
+}));
+$("more-records").addEventListener("click",() => pending($("more-records"),"正在读取",() => loadOperationRecords(true)));
+
+async function loadStyleConversations() {
+  if (styleConversationsLoading) return;
+  styleConversationsLoading = true;
+  $("style-retry").hidden = true;
+  note("style-chats","正在读取会话");
+  try {
+    conversations = await request("/api/style-sessions");
+    styleConversationsLoaded = true;
+    renderStyleChats();
+  } catch(error) {
+    note("style-chats",error.message || "暂时无法读取会话。",true);
+    $("style-retry").hidden = false;
+  } finally {
+    styleConversationsLoading = false;
+  }
+}
+$("history-style").addEventListener("toggle",() => {
+  if (!$("history-style").open) return;
+  if (styleConversationsLoaded) renderStyleChats();
+  else loadStyleConversations();
+});
+$("style-retry").addEventListener("click",loadStyleConversations);
+
+function renderTone() {
+  document.querySelectorAll("[data-tone]").forEach(button => button.setAttribute("aria-pressed",String(button.dataset.tone === $("tone").value)));
+}
+document.querySelectorAll("[data-tone]").forEach(button => button.addEventListener("click",() => {
+  $("tone").value = button.dataset.tone;
+  renderTone();
+}));
+$("tone").addEventListener("input",renderTone);
+$("model-url").addEventListener("input",describeModel);
+$("model-name").addEventListener("input",describeModel);
+function renderAssignments() {
+  const rows = customers.map(customer => {
+    const row = element("div","detail-row");
+    const person = element("div");
+    const name = privacy ? "客户" : customer.name;
+    const assigned = customer.adviser;
+    person.append(element("strong","",name),element("span","small",assigned
+      ? "对接人 · " + (privacy ? "已指定" : assigned.name) : "待指定一位对接人"));
+    const controls = element("div","inline");
+    const choose = action(assigned ? "更换对接人" : "指定对接人","btn sm",() => pickAdviser(customer.id));
+    choose.setAttribute("aria-label","为 " + name + (assigned ? " 更换对接人" : " 指定对接人"));
+    const remove = action("移除","btn sm",() => {
+      customers = customers.filter(item => item.id !== customer.id);
+      if (adviserTarget === customer.id) pickAdviser(null,false);
+      renderAssignments();
+      renderContacts();
+    });
+    remove.setAttribute("aria-label","移除客户 " + name);
+    controls.append(choose,remove);
+    row.append(person,controls);
+    return row;
+  });
+  $("group-customers").replaceChildren(...rows);
+  if (!rows.length) $("group-customers").append(element("p","small","从右侧通讯录添加客户。"));
+}
+function pickAdviser(id, focus = true) {
+  adviserTarget = id;
+  ++contactQueryTicket;
+  contacts = [];
+  $("contact-query").value = "";
+  note("contact-feedback","");
+  const target = customers.find(item => item.id === id);
+  $("cancel-adviser").hidden = !target;
+  note("contact-title",target ? "指定一位对接人" : "从微信通讯录选择");
+  note("contact-instruction",target ? "为 " + (privacy ? "选定客户" : target.name) + " 选择联系人。"
+    : "先添加客户，再为每位客户指定一位对接人。");
+  renderContacts();
+  if (focus) $("contact-query").focus();
+}
+$("cancel-adviser").addEventListener("click",() => pickAdviser(null));
+
+function renderContacts() {
+  const target = customers.find(item => item.id === adviserTarget);
+  $("contact-results").replaceChildren(...contacts.map(person => {
+    const row = element("div","detail-row");
+    const alreadyCustomer = customers.some(item => item.id === person.id);
+    const isOwner = person.id === localAccountId;
+    const matchesTarget = target && (target.id === person.id || target.name === person.name);
+    const selected = target?.adviser?.id === person.id;
+    let label = target ? "设为对接人" : "添加为客户";
+    if (isOwner) label = "当前微信";
+    else if (matchesTarget) label = "当前客户";
+    else if (selected) label = "已指定";
+    else if (!target && alreadyCustomer) label = "已添加";
+    const add = action(label,"btn sm",() => {
+      if (target) {
+        target.adviser = person;
+        pickAdviser(null,false);
+        renderAssignments();
+        note("contact-feedback","对接人已选定，保存后生效。");
+        return;
+      }
+      if (customers.length >= 20) {
+        note("contact-feedback","最多可以配置 20 位触发客户。",true);
+        return;
+      }
+      customers.push({id:person.id,name:person.name,adviser:null});
+      renderAssignments();
+      renderContacts();
+    });
+    add.disabled = Boolean(isOwner || matchesTarget || selected || (!target && alreadyCustomer));
+    row.append(element("strong","",privacy ? "联系人" : person.name),add);
+    return row;
+  }));
+}
+function renderReplyTargets() {
+  $("reply-targets").replaceChildren(...replyTargets.map(person => {
+    const row = element("div","detail-row");
+    const label = privacy ? "联系人" : person.name;
+    const remove = action("移除","btn sm",() => {
+      replyTargets = replyTargets.filter(item => item.id !== person.id);
+      renderReplyTargets();
+      $("reply-contact-query").focus();
+    });
+    remove.setAttribute("aria-label","移除 " + label);
+    row.append(element("strong","",label),remove);
+    return row;
+  }));
+  if (!replyTargets.length) $("reply-targets").append(element("span","small","尚未添加联系人"));
+  $("reply-contact-results").replaceChildren(...replyContacts.filter(person => person.id !== localAccountId).map(person => {
+    const row = element("div","detail-row");
+    const selected = replyTargets.some(item => item.id === person.id);
+    const add = action(selected ? "已添加" : "添加","btn sm",() => {
+      if (replyTargets.length >= 20) return note("reply-contact-feedback","最多可添加 20 位联系人。",true);
+      replyTargets.push(person);
+      renderReplyTargets();
+      $("reply-contact-query").focus();
+    });
+    add.disabled = selected;
+    row.append(element("strong","",privacy ? "联系人" : person.name),add);
+    return row;
+  }));
+}
+function replyMode() {
+  return document.querySelector('input[name="reply-mode"]:checked').value;
+}
+function renderReplyMode() {
+  const fixed = replyMode() === "fixed";
+  $("reply-fixed-field").hidden = !fixed;
+  $("reply-fixed").disabled = !fixed;
+  $("reply-ai-settings").hidden = fixed;
+  $("reply-context-count").disabled = fixed;
+}
+function replyScope() {
+  return document.querySelector('input[name="reply-scope"]:checked').value;
+}
+function replyTagRule() {
+  return document.querySelector('input[name="reply-tag-rule"]:checked').value;
+}
+function renderReplyTagRule() {
+  const excluding = replyTagRule() === "exclude";
+  let hint = "只回复带有任意一个所选标签的联系人。";
+  if (excluding) {
+    hint = replyTagDirectory?.syncedAt && !replyTagDirectory.canExclude
+      ? "请刷新微信标签，以便核对其余联系人。"
+      : "跳过带有任意一个所选标签的联系人，回复其余联系人。";
+  }
+  note("reply-tag-rule-info",hint);
+}
+function renderReplyScope() {
+  const byTag = replyScope() === "tags";
+  $("reply-contact-fields").hidden = byTag;
+  $("reply-tag-fields").hidden = !byTag;
+  if (byTag) renderReplyTagRule();
+  if (byTag && replyTagDirectory === null) loadReplyTags();
+}
+function renderReplyTags() {
+  renderReplyTagRule();
+  const labels = replyTagDirectory?.labels || [];
+  const names = new Set(labels.map(item => item.name));
+  const rows = labels.concat([...replyTagSelection].filter(name => !names.has(name))
+    .map(name => ({name, missing:true})));
+  if (!$("sync-reply-tags").disabled)
+    $("sync-reply-tags").textContent = replyTagDirectory?.syncedAt ? "刷新微信标签" : "读取微信标签";
+  note("reply-tag-count","已选 " + replyTagSelection.size + " / " + labels.length + " 个标签");
+  $("reply-tag-options").replaceChildren(...rows.map(item => {
+    const label = element("label","choice");
+    const input = element("input");
+    input.type = "checkbox";
+    input.checked = replyTagSelection.has(item.name);
+    input.addEventListener("change",() => {
+      if (input.checked) replyTagSelection.add(item.name);
+      else replyTagSelection.delete(item.name);
+      note("reply-tag-count","已选 " + replyTagSelection.size + " / " + labels.length + " 个标签");
+    });
+    label.append(input,element("span","",item.name),
+      element("small","",item.missing ? "请刷新后重新选择" : item.members + " 位可匹配联系人"));
+    return label;
+  }));
+  if (!rows.length) $("reply-tag-options").append(element("span","small",
+    replyTagDirectory?.syncedAt ? "微信通讯录里还没有标签。" : "读取后可以勾选微信里的标签。"));
+}
+async function loadReplyTags() {
+  try {
+    replyTagDirectory = await request("/api/wechat-tags");
+    renderReplyTags();
+  } catch(error) { note("reply-tag-feedback",error.message,true); }
+}
+$("sync-reply-tags").addEventListener("click",async () => {
+  await pending($("sync-reply-tags"),"正在读取",async () => {
+    note("reply-tag-feedback","正在读取微信标签与联系人，请保持电脑版微信打开。");
+    try {
+      replyTagDirectory = await jsonRequest("/api/wechat-tags/sync","POST",{});
+      renderReplyTags();
+      note("reply-tag-feedback","已读取 " + replyTagDirectory.labels.length + " 个微信标签。");
+    } catch(error) { note("reply-tag-feedback",error.message,true); }
+  });
+  if (replyTagDirectory?.syncedAt) $("sync-reply-tags").textContent = "刷新微信标签";
+});
+$("reply-form").addEventListener("change",event => {
+  if (event.target.name === "reply-mode") renderReplyMode();
+  if (event.target.name === "reply-scope") renderReplyScope();
+  if (event.target.name === "reply-tag-rule") renderReplyTagRule();
+});
+$("reply-contact-query").addEventListener("keydown",event => {
+  if (event.key !== "Enter" || event.isComposing) return;
+  event.preventDefault();
+  $("reply-contact-search").click();
+});
+$("reply-contact-search").addEventListener("click",() => {
+  const query = $("reply-contact-query").value.trim();
+  if (!query) return note("reply-contact-feedback","请输入微信昵称或备注。",true);
+  pending($("reply-contact-search"),"正在搜索",async () => {
+    replyContacts = [];
+    renderReplyTargets();
+    try {
+      replyContacts = await request("/api/contacts?q=" + encodeURIComponent(query));
+      renderReplyTargets();
+      note("reply-contact-feedback",$("reply-contact-results").childElementCount ? "" : "没有找到匹配的联系人。");
+    } catch (error) { note("reply-contact-feedback",error.message,true); }
+  });
+});
+async function loadSettings() {
+  try {
+    const data = await request("/api/settings");
+    $("reply-enabled").checked = data.reply.enabled;
+    $("reply-context-count").value = data.reply.contextMessages;
+    document.querySelector('input[name="reply-mode"][value="' + (data.reply.mode === "model" ? "model" : "fixed") + '"]').checked = true;
+    $("reply-fixed").value = data.reply.fixedText;
+    replyTargets = data.reply.targets || [];
+    replyTagSelection = new Set(data.reply.tags || []);
+    document.querySelector('input[name="reply-scope"][value="' + (data.reply.scope === "tags" ? "tags" : "contacts") + '"]').checked = true;
+    document.querySelector('input[name="reply-tag-rule"][value="' + (data.reply.tagRule === "exclude" ? "exclude" : "include") + '"]').checked = true;
+    renderReplyMode();
+    renderReplyTargets();
+    renderReplyScope();
+    $("instruction").value = data.reply.instruction;
+    $("model-url").value = data.reply.baseUrl;
+    $("model-name").value = data.reply.model;
+    if (!settingsReady) $("style-model").checked = Boolean(data.reply.baseUrl && data.reply.model);
+    loadSetupFields(data.reply);
+    $("group-name").value = data.group.name;
+    customers = data.group.customers || [];
+    $("group-enabled").checked = Boolean(data.group.enabled);
+    $("group-trigger").value = data.group.triggerRule || "";
+    $("group-welcome").value = data.group.welcome || "";
+    settingsReady = true;
+    $("save-model").disabled = false;
+    savedAutomation.reply = data.reply.enabled;
+    savedAutomation.group = Boolean(data.group.enabled);
+    paintAutomationStatus("reply");
+    paintAutomationStatus("group");
+    describeModel();
+    renderTone();
+    renderAssignments();
+  } catch(error) {
+    note("reply-feedback",error.message,true);
+    note("model-feedback",error.message,true);
+    note("group-feedback",error.message,true);
+    setupNotify(error.message,true);
+  }
+}
+function recentDirectStyleChats() {
+  return conversations.filter(chat => !chat.group && chat.id !== localAccountId &&
+    !chat.id.includes("@") && !chat.id.startsWith("gh_") && !systemStyleAccounts.has(chat.id))
+    .slice(0,maxStyleChats);
+}
+function styleCoverage(result) {
+  return "读到 " + result.chats + " / " + result.selectedChats + " 个会话的 " + result.messages + " 条本人消息"
+    + (result.modelSamples ? "，AI 抽样 " + result.modelSamples + " 条" : "")
+    + (result.partial ? "，部分历史暂不可读。" : "。");
+}
+function renderStyleChats() {
+  const selected = styleChats;
+  const id = name => "style-" + name;
+  const count = () => {
+    note(id("count"),"已选 " + selected.size + " / " + maxStyleChats);
+    $(id("clear")).disabled = !selected.size;
+  };
+  const term = $(id("query")).value.trim().toLowerCase();
+  const matching = conversations.filter(chat => !term || (chat.name + " " + chat.id).toLowerCase().includes(term));
+  const visible = matching.slice(0,80);
+  const rows = visible.map((chat,index) => {
+    const label = element("label","choice");
+    const checkbox = element("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = selected.has(chat.id);
+    checkbox.addEventListener("change",() => {
+      if (checkbox.checked && selected.size >= maxStyleChats) {
+        checkbox.checked = false;
+        note(id("feedback"),"最多可以选择 " + maxStyleChats + " 个会话。",true);
+        return;
+      }
+      if (checkbox.checked) selected.add(chat.id);
+      else selected.delete(chat.id);
+      note(id("feedback"),"");
+      count();
+    });
+    const name = privacy ? (chat.group ? "群聊 " : "联系人 ") + (index + 1) : chat.name;
+    label.append(checkbox,element("span","",name));
+    return label;
+  });
+  const list = $(id("chats"));
+  list.classList.remove("error");
+  list.replaceChildren(...rows);
+  if (!rows.length) list.append(element("span","small","没有找到可选会话。"));
+  $(id("select-recent")).disabled = !recentDirectStyleChats().length;
+  count();
+}
+$("style-select-recent").addEventListener("click",() => {
+  styleChats.clear();
+  for (const chat of recentDirectStyleChats()) styleChats.add(chat.id);
+  $("style-query").value = "";
+  note("style-feedback","");
+  renderStyleChats();
+});
+$("style-clear").addEventListener("click",() => {
+  styleChats.clear();
+  note("style-feedback","");
+  renderStyleChats();
+});
+$("style-query").addEventListener("input",() => { if (styleConversationsLoaded) renderStyleChats(); });
+$("style-query").addEventListener("keydown",event => {
+  if (event.key === "Enter") event.preventDefault();
+});
+$("analyze-style").addEventListener("click",() => {
+  if (!styleChats.size) {
+    note("style-feedback","请先选择要分析的会话。",true);
+    $("style-query").focus();
+    return;
+  }
+  $("style-result").hidden = true;
+  note("style-feedback","");
+  const days = Number(document.querySelector('input[name="style-days"]:checked').value);
+  pending($("analyze-style"),"正在分析",async () => {
+    try {
+      const result = await jsonRequest("/api/style","POST",{chats:[...styleChats],days,useModel:$("style-model").checked});
+      $("style-result-title").textContent = result.mode === "model" ? "历史语气与模型建议" : "本机语气分析";
+      note("style-result-count",styleCoverage(result));
+      $("style-summary").replaceChildren(...result.summary.map(item => element("li","",item)));
+      note("style-suggestion",result.profile);
+      $("style-result").hidden = false;
+      if (result.modelError) note("style-feedback","模型分析失败，已保留本机统计。"+result.modelError,true);
+      $("style-result-title").focus();
+    } catch(error) { note("style-feedback",error.message,true); }
+  });
+});
+$("apply-style").addEventListener("click",() => {
+  const profile = $("style-suggestion").textContent.trim();
+  if (!profile) return;
+  $("learned-tone").value = profile;
+  note("learned-tone-feedback","已填入建议，可修改后保存。");
+  $("learned-tone").focus();
+});
+$("reply-form").addEventListener("submit",event => {
+  event.preventDefault();
+  if (!settingsReady) return;
+  pending($("save-reply"),"正在保存",async () => {
+    try {
+      const mode = replyMode();
+      const context = mode === "model" ? {contextMessages:$("reply-context-count").valueAsNumber} : {};
+      const saved = await jsonRequest("/api/settings/reply","PUT",{enabled:$("reply-enabled").checked,mode,
+        fixedText:$("reply-fixed").value,targets:replyTargets,scope:replyScope(),
+        tagRule:replyTagRule(),tags:[...replyTagSelection],
+        instruction:$("instruction").value,...context});
+      savedAutomation.reply = saved.enabled;
+      paintAutomationStatus("reply");
+      void loadAutomationStatus();
+      note("reply-feedback","回复设置已保存。");
+    } catch(error) { note("reply-feedback",error.message,true); }
+  });
+});
+$("model-form").addEventListener("submit",event => {
+  event.preventDefault();
+  pending($("save-model"),"正在保存",async () => {
+    const apiKey = $("reply-api-key").value;
+    const baseUrl = $("model-url").value;
+    const model = $("model-name").value;
+    try {
+      const saved = await jsonRequest("/api/settings/model","PUT",{baseUrl, model, apiKey});
+      if ($("reply-api-key").value === apiKey) resetModelKey("reply");
+      modelHasKey = saved.modelKeyPresent;
+      setupSavedModelUrl = saved.baseUrl;
+      if ($("model-url").value === baseUrl) $("model-url").value = saved.baseUrl;
+      if ($("model-name").value === model) $("model-name").value = saved.model;
+      $("setup-model-url").value = saved.baseUrl;
+      $("setup-model-name").value = saved.model;
+      describeModel();
+      renderSetupKeyHint();
+      note("model-feedback","AI 配置已保存。");
+    } catch(error) { note("model-feedback",error.message,true); }
+  });
+});
+$("preview-form").addEventListener("submit",event => {
+  event.preventDefault();
+  $("preview-result").hidden = true;
+  note("preview-feedback","");
+  pending($("preview-button"),"正在试写",async () => {
+    try {
+      const data = await jsonRequest("/api/preview","POST",{message:$("customer-message").value});
+      $("preview-mode").textContent = {model:"模型试写",fixed:"固定回复",sample:"本地试写示例"}[data.mode];
+      $("preview-text").textContent = data.text;
+      $("preview-sources").textContent = data.mode === "fixed" ? "知识库仅在 AI 回复模式下生效。"
+        : data.mode === "sample" ? "保存 AI 模型配置后可检索知识库。"
+        : data.sources.length ? "本次匹配资料　" + data.sources.join("、") : "本次没有匹配到知识库资料。";
+      $("preview-result").hidden = false;
+    } catch(error) { note("preview-feedback",error.message,true); }
+  });
+});
+$("group-form").addEventListener("submit",event => {
+  event.preventDefault();
+  if (!settingsReady) return;
+  pending($("save-group"),"正在保存",async () => {
+    try {
+      const saved = await jsonRequest("/api/settings/group","PUT",{
+        name:$("group-name").value, enabled:$("group-enabled").checked,
+        triggerRule:$("group-trigger").value, welcome:$("group-welcome").value, customers
+      });
+      customers = saved.customers;
+      savedAutomation.group = Boolean(saved.enabled);
+      paintAutomationStatus("group");
+      void loadAutomationStatus();
+      renderAssignments();
+      renderContacts();
+      note("group-feedback","建群设置已保存。");
+    } catch(error) { note("group-feedback",error.message,true); }
+  });
+});
+$("group-test").addEventListener("click",() => {
+  if (!$("group-test-message").value.trim()) {
+    note("group-test-feedback","请输入一条测试消息。",true);
+    $("group-test-message").focus();
+    return;
+  }
+  $("group-test-result").hidden = true;
+  note("group-test-feedback","");
+  pending($("group-test"),"正在判断",async () => {
+    try {
+      const result = await jsonRequest("/api/group-preview","POST",{
+        message:$("group-test-message").value,triggerRule:$("group-trigger").value,welcome:$("group-welcome").value
+      });
+      note("group-test-title",result.eligible ? "符合建群条件" : "未达到建群条件");
+      note("group-test-feedback",result.reason);
+      note("group-test-welcome",result.eligible ? result.welcome : "");
+      $("group-test-result").hidden = false;
+    } catch(error) { note("group-test-feedback",error.message,true); }
+  });
+});
+$("contact-form").addEventListener("submit",event => {
+  event.preventDefault();
+  const ticket = ++contactQueryTicket;
+  pending($("contact-search"),"搜索中",async () => {
+    try {
+      const results = await request("/api/contacts?q=" + encodeURIComponent($("contact-query").value));
+      if (ticket !== contactQueryTicket) return;
+      contacts = results;
+      renderContacts();
+      note("contact-feedback",contacts.length ? "找到 " + contacts.length + " 个联系人。" : "没有找到匹配的联系人。");
+    } catch(error) {
+      if (ticket === contactQueryTicket) note("contact-feedback",error.message,true);
+    }
+  });
+});
+let savedBaseTone = null, savedLearnedTone = null, savedMimicTone = null;
+let historyJobState = "idle", historyStatusTimer, historyStatusBusy = false;
+let historyCardsLoaded = false, historyCardsTicket = 0, historyCardsQuery = "";
+let historyCardsPage = 0, historyCardsTotal = 0, historyCardsPages = 0;
+const knowledgeTabs = [...document.querySelectorAll(".knowledge-tabs [role=tab]")];
+function selectKnowledgeTab(selected, focus = false) {
+  for (const tab of knowledgeTabs) {
+    const active = tab === selected;
+    tab.setAttribute("aria-selected",String(active));
+    tab.tabIndex = active ? 0 : -1;
+    $(tab.getAttribute("aria-controls")).hidden = !active;
+  }
+  if (focus) selected.focus();
+}
+for (const [index,tab] of knowledgeTabs.entries()) {
+  tab.addEventListener("click",() => selectKnowledgeTab(tab));
+  tab.addEventListener("keydown",event => {
+    const last = knowledgeTabs.length - 1;
+    const destinations = {ArrowLeft:(index + last) % knowledgeTabs.length, ArrowRight:(index + 1) % knowledgeTabs.length, Home:0, End:last};
+    if (!Object.hasOwn(destinations,event.key)) return;
+    event.preventDefault();
+    selectKnowledgeTab(knowledgeTabs[destinations[event.key]],true);
+  });
+}
+let historyNotice = null, historyNoticeText = "", historyResultAt = null;
+let historyStarting = false, historyStopping = false, historyStatusRevision = 0;
+let historyPhase = "";
+const historyPrefixes = ["","setup-"];
+
+function paintHistoryActivity() {
+  const active = historyStarting || historyJobState === "running";
+  const message = historyStarting ? "正在启动整理" : historyStopping ? "正在停止整理"
+    : historyPhase === "retrying" ? "模型响应较慢，正在重试" : historyPhase === "model" ? "等待 AI 整理这一批"
+    : "正在后台整理";
+  const inlineProgress = currentView === "knowledge" ||
+    (currentView === "setup" && setupStep === 3 && !$("setup-history-fields").hidden);
+  const showProgress = active && !inlineProgress;
+  for (const prefix of historyPrefixes) {
+    $(prefix + "history-loading").hidden = !active;
+    const label = prefix + "history-loading-label";
+    if (active && $(label).textContent !== message) note(label,message);
+  }
+  $("history-notice").hidden = !(showProgress || (!active && historyNotice));
+  $("history-notice-spinner").hidden = !showProgress;
+  $("view-history-result").textContent = showProgress ? "查看进度" : "查看结果";
+  $("dismiss-history-notice").hidden = showProgress;
+  const text = showProgress ? message : historyNoticeText;
+  if ($("history-notice-text").textContent !== text) note("history-notice-text", text);
+}
+
+async function refreshHistoryLearning() {
+  if (historyStatusBusy) return;
+  historyStatusBusy = true;
+  clearTimeout(historyStatusTimer);
+  const revision = historyStatusRevision;
+  try {
+    const data = await request("/api/history-learning");
+    if (revision !== historyStatusRevision) return;
+    const job = data.job;
+    const running = job.state === "running";
+    const changed = historyResultAt !== null && historyResultAt !== job.finishedAt;
+    const finished = !running && (historyJobState === "running" || changed);
+    historyJobState = job.state;
+    historyPhase = job.phase || "";
+    if (job.finishedAt) historyResultAt = job.finishedAt;
+    if (savedBaseTone === null || $("tone").value === savedBaseTone) {
+      $("tone").value = data.baseTone;
+      renderTone();
+    }
+    savedBaseTone = data.baseTone;
+    if (savedLearnedTone === null || $("learned-tone").value === savedLearnedTone) $("learned-tone").value = data.tone;
+    savedLearnedTone = data.tone;
+    if (savedMimicTone === null || $("mimic-tone").checked === savedMimicTone) $("mimic-tone").checked = data.mimicTone;
+    savedMimicTone = data.mimicTone;
+    $("save-learned-tone").disabled = false;
+    $("restore-history").hidden = running || !data.canRestore;
+    $("setup-history-results").hidden = !data.canRestore;
+    if (!running) historyStopping = false;
+    const counts = `已读取 ${job.read || 0} 条文字，已分析 ${job.replies || 0} 条本人消息，整理出 ${job.cards || 0} 张卡片。`;
+    const messages = {
+      idle: !data.ready ? "请先在「回复设置」中启用 AI 模式并保存模型。"
+        : !data.historyAvailable ? "请先配置本机微信历史读取。" : "",
+      running: "",
+      done: "整理完成。" + counts + (job.toneSaved ? "语气和卡片已切换到新版本。" : ""),
+      partial: `已整理可读部分，有 ${job.unreadable} 处历史无法读取。` + counts,
+      cancelled: "已停止。继续使用当前语气和知识卡片。",
+      restored: "已恢复上一版语气和知识卡片。",
+      error: job.error + " 继续使用当前语气和知识卡片。",
+    };
+    for (const prefix of historyPrefixes) {
+      const start = $(prefix + "learn-history");
+      start.disabled = historyStarting || running || !data.ready || !data.historyAvailable;
+      start.textContent = running ? "正在整理" : data.canRestore ? "一键重新整理"
+        : prefix ? "开始整理" : "整理全部文字历史";
+      $(prefix + "cancel-learning").hidden = !running;
+      $(prefix + "cancel-learning").disabled = historyStopping;
+      note(prefix + "learning-status",messages[job.state],job.state === "error");
+      const progress = prefix + "history-loading-counts";
+      if (running && $(progress).textContent !== counts) note(progress,counts);
+    }
+    historyNotice = job.noticeUnread ? job.finishedAt : null;
+    historyNoticeText = !historyNotice ? "" : job.state === "done" ? `历史整理完成，已生成 ${job.cards} 张知识卡片。`
+      : job.state === "partial" ? "可读的历史已整理完成。" : job.state === "error" ? "历史整理未完成，请查看原因。" : "历史整理已停止。";
+    paintHistoryActivity();
+    if (finished && historyCardsLoaded && !$("history-card-list").querySelector("details[open]")) loadHistoryCards();
+  } catch (error) {
+    for (const prefix of historyPrefixes) note(prefix + "learning-status",error.message,true);
+  } finally {
+    historyStatusBusy = false;
+    if (historyJobState === "running") historyStatusTimer = setTimeout(refreshHistoryLearning, 2500);
+  }
+}
+
+async function startHistoryLearning() {
+  if (historyStarting || historyJobState === "running") return;
+  historyStarting = true;
+  historyStatusRevision++;
+  for (const prefix of historyPrefixes) {
+    $(prefix + "learn-history").disabled = true;
+    note(prefix + "history-loading-counts","");
+    note(prefix + "learning-status","");
+  }
+  paintHistoryActivity();
+  try {
+    await jsonRequest("/api/history-learning", "POST", {});
+    historyJobState = "running";
+  } catch (error) {
+    for (const prefix of historyPrefixes) {
+      $(prefix + "learn-history").disabled = false;
+      note(prefix + "learning-status",error.message,true);
+    }
+  } finally {
+    historyStarting = false;
+    paintHistoryActivity();
+    if (historyJobState === "running") await refreshHistoryLearning();
+  }
+}
+
+async function stopHistoryLearning() {
+  if (historyStopping) return;
+  for (const prefix of historyPrefixes) $(prefix + "cancel-learning").disabled = true;
+  historyStopping = true;
+  paintHistoryActivity();
+  try {
+    await jsonRequest("/api/history-learning/cancel", "POST", {});
+  } catch (error) {
+    historyStopping = false;
+    paintHistoryActivity();
+    for (const prefix of historyPrefixes) {
+      $(prefix + "cancel-learning").disabled = false;
+      note(prefix + "learning-status",error.message,true);
+    }
+  }
+}
+
+for (const prefix of historyPrefixes) {
+  $(prefix + "learn-history").addEventListener("click",startHistoryLearning);
+  $(prefix + "cancel-learning").addEventListener("click",stopHistoryLearning);
+}
+$("setup-history-results").addEventListener("click",() => {
+  show("knowledge");
+  selectKnowledgeTab($("knowledge-cards-tab"),true);
+});
+
+$("restore-history").addEventListener("click", () => pending($("restore-history"), "正在恢复", async () => {
+  try {
+    await jsonRequest("/api/history-learning/restore", "POST", {});
+    savedLearnedTone = null;
+    await refreshHistoryLearning();
+    await loadHistoryCards();
+    note("learning-status", "已恢复上一版语气和知识卡片。");
+  } catch (error) { note("learning-status", error.message, true); }
+}));
+
+async function dismissHistoryNotice() {
+  if (!historyNotice) return;
+  const finishedAt = historyNotice;
+  try {
+    await jsonRequest("/api/history-learning/dismiss", "POST", {finishedAt});
+    if (historyNotice === finishedAt) {
+      historyStatusRevision++;
+      historyNotice = null;
+      historyNoticeText = "";
+      paintHistoryActivity();
+    }
+  } catch (error) { note("history-notice-text", error.message, true); }
+}
+$("dismiss-history-notice").addEventListener("click", dismissHistoryNotice);
+$("view-history-result").addEventListener("click", async () => {
+  if (historyStarting || historyJobState === "running") {
+    show("knowledge");
+    $("main").focus();
+    return;
+  }
+  await dismissHistoryNotice();
+  show("knowledge");
+  selectKnowledgeTab($("knowledge-cards-tab"));
+  loadHistoryCards();
+  $("main").focus();
+});
+
+$("learned-tone-form").addEventListener("submit", event => {
+  event.preventDefault();
+  const baseTone = $("tone").value;
+  const tone = $("learned-tone").value;
+  const mimicTone = $("mimic-tone").checked;
+  pending($("save-learned-tone"), "正在保存", async () => {
+    try {
+      const updated = await jsonRequest("/api/history-tone", "PUT", {tone,baseTone,mimicTone});
+      historyStatusRevision++;
+      savedBaseTone = updated.baseTone;
+      savedLearnedTone = updated.tone;
+      savedMimicTone = updated.mimicTone;
+      $("setup-mimic").checked = savedMimicTone;
+      if ($("tone").value === baseTone) $("tone").value = updated.baseTone;
+      renderTone();
+      if ($("learned-tone").value === tone) $("learned-tone").value = updated.tone;
+      note("learned-tone-feedback", "语气已保存。");
+    } catch (error) { note("learned-tone-feedback", error.message, true); }
+  });
+});
+
+function historyCardEditor(card) {
+  const editor = element("details", "history-card-editor");
+  const summary = element("summary");
+  const title = element("span", "card-title-cell");
+  const triggers = element("span", "card-trigger-cell");
+  const status = element("span", "card-use-cell");
+  summary.append(title,triggers,status);
+  const form = element("form", "panel-body");
+  function render(saved) {
+    title.textContent = saved.title;
+    triggers.textContent = saved.triggers || "按内容匹配";
+    triggers.title = triggers.textContent;
+    status.textContent = saved.enabled ? "已启用" : "已停用";
+    status.dataset.enabled = String(Boolean(saved.enabled));
+  }
+  render(card);
+  const fields = [
+    ["title", "卡片标题", "input", 100, true],
+    ["content", "可复用答复", "textarea", 1200, true],
+    ["triggers", "触发词（可选）", "input", 180, false],
+  ];
+  const inputs = {};
+  for (const [name, label, tag, maxLength, required] of fields) {
+    const field = element("div", "field");
+    const input = element(tag, "input");
+    input.id = `card-${card.id}-${name}`;
+    input.maxLength = maxLength;
+    input.required = required;
+    input.value = card[name];
+    if (tag === "textarea") input.rows = 5;
+    const caption = element("label", "", label);
+    caption.htmlFor = input.id;
+    field.append(caption, input);
+    if (name === "triggers") field.append(element("small", "", "多个词用逗号或顿号分隔。留空时按相关性匹配。"));
+    form.append(field);
+    inputs[name] = input;
+  }
+  const toggle = element("label", "choice", "用于 AI 回复");
+  const enabled = element("input");
+  enabled.type = "checkbox";
+  enabled.checked = Boolean(card.enabled);
+  toggle.prepend(enabled);
+  const controls = element("div", "form-actions");
+  const save = element("button", "btn", "保存卡片");
+  save.type = "submit";
+  const feedback = element("span", "local-status small");
+  feedback.setAttribute("role", "status");
+  controls.append(save, feedback);
+  form.append(toggle, controls);
+  form.addEventListener("submit", event => {
+    event.preventDefault();
+    const data = Object.fromEntries(Object.entries(inputs).map(([name, input]) => [name, input.value]));
+    data.enabled = enabled.checked;
+    pending(save, "正在保存", async () => {
+      try {
+        const saved = await jsonRequest("/api/history-cards/" + card.id, "PUT", data);
+        render(saved);
+        feedback.classList.remove("error");
+        feedback.textContent = "卡片已保存。";
+      } catch (error) {
+        feedback.classList.add("error");
+        feedback.textContent = error.message;
+      }
+    });
+  });
+  editor.append(summary, form);
+  return editor;
+}
+
+function paintHistoryPagination(loading = false) {
+  $("previous-history-cards").disabled = loading || historyCardsPage <= 1;
+  $("more-history-cards").disabled = loading || historyCardsPage >= historyCardsPages;
+  $("history-card-pagination").hidden = !historyCardsLoaded;
+  const pages = historyCardsPages ? `第 ${historyCardsPage} / ${historyCardsPages} 页` : "0 页";
+  note("history-card-page",`共 ${historyCardsTotal.toLocaleString("zh-CN")} 条 · ${pages}`);
+}
+async function loadHistoryCards(page = 1, query = historyCardsQuery) {
+  const ticket = ++historyCardsTicket;
+  paintHistoryPagination(true);
+  note("history-card-feedback", "正在读取卡片");
+  try {
+    const params = new URLSearchParams({q:query, page, limit:10});
+    const data = await request("/api/history-cards?" + params);
+    if (ticket !== historyCardsTicket) return;
+    const nodes = data.items.map(historyCardEditor);
+    $("history-card-list").replaceChildren(...nodes);
+    $("history-card-table").hidden = !nodes.length;
+    historyCardsPage = data.page;
+    historyCardsTotal = data.total;
+    historyCardsPages = data.totalPages;
+    historyCardsQuery = query;
+    historyCardsLoaded = true;
+    note("history-card-feedback", nodes.length ? "" : query ? "没有匹配的卡片。" : "暂无知识卡片。");
+  } catch (error) {
+    if (ticket === historyCardsTicket) note("history-card-feedback", error.message, true);
+  } finally {
+    if (ticket === historyCardsTicket) paintHistoryPagination();
+  }
+}
+
+$("search-history-cards").addEventListener("submit", event => {
+  event.preventDefault();
+  loadHistoryCards(1,$("history-card-query").value.trim());
+});
+$("history-card-query").addEventListener("input", event => {
+  if (!event.target.value.trim()) loadHistoryCards(1,"");
+});
+$("previous-history-cards").addEventListener("click", () => loadHistoryCards(historyCardsPage - 1));
+$("more-history-cards").addEventListener("click", () => loadHistoryCards(historyCardsPage + 1));
+
+async function loadFiles() {
+  try {
+    const files = await request("/api/knowledge");
+    note("file-count",files.length + " 份资料");
+    $("files").replaceChildren(...files.map(file => {
+      const row = element("div","file-row");
+      const summary = element("div");
+      summary.append(element("strong","",file.name),element("p","small",file.characters + " 字 · " + new Intl.DateTimeFormat("zh-CN").format(new Date(file.uploaded_at))));
+      const rule = label => label ? "触发词　" + label : "按内容相关性匹配";
+      const triggerNote = element("p","small",rule(file.triggers));
+      const editor = element("details");
+      editor.append(element("summary","","编辑触发词"));
+      const field = element("div","field");
+      const label = element("label","","触发词（可选）");
+      const input = element("input","input");
+      input.id = "knowledge-triggers-" + file.id;
+      input.maxLength = 180;
+      input.value = file.triggers || "";
+      label.htmlFor = input.id;
+      const feedback = element("small","local-status");
+      feedback.setAttribute("role","status");
+      const save = action("保存触发词","btn sm",() => pending(save,"正在保存",async () => {
+        feedback.textContent = "";
+        feedback.classList.remove("error");
+        try {
+          const updated = await jsonRequest("/api/knowledge/" + file.id,"PUT",{triggers:input.value});
+          input.value = updated.triggers;
+          triggerNote.textContent = rule(updated.triggers);
+          feedback.textContent = "已保存。";
+        } catch(error) {
+          feedback.textContent = error.message;
+          feedback.classList.add("error");
+        }
+      }));
+      const controls = element("div","inline");
+      controls.append(save,feedback);
+      field.append(label,input,controls);
+      editor.append(field);
+      summary.append(triggerNote,editor);
+      const remove = action("删除","btn sm danger",async () => {
+        if (!confirm("删除这份资料？")) return;
+        await pending(remove,"删除中",async () => {
+          try {
+            await request("/api/knowledge/" + file.id,{method:"DELETE"});
+            await loadFiles();
+            note("file-feedback","资料已删除。");
+          } catch(error) { note("file-feedback",error.message,true); }
+        });
+      });
+      remove.setAttribute("aria-label","删除资料 " + file.name);
+      row.append(summary,remove);
+      return row;
+    }));
+    if (!files.length) $("files").append(element("p","muted","暂无资料。"));
+  } catch(error) { note("file-count",error.message,true); }
+}
+$("upload-form").addEventListener("submit",event => {
+  event.preventDefault();
+  const file = $("file").files[0];
+  if (!file) return;
+  pending($("upload-button"),"正在上传",async () => {
+    try {
+      const params = new URLSearchParams({name:file.name,triggers:$("knowledge-triggers").value});
+      await request("/api/knowledge?" + params,{method:"POST",body:file});
+      $("file").value = "";
+      $("knowledge-triggers").value = "";
+      await loadFiles();
+      note("file-feedback","资料已上传。");
+    } catch(error) { note("file-feedback",error.message,true); }
+  });
+});
+show(location.hash.slice(1));
+Promise.all([loadStatus(),loadAutomationStatus(),loadSettings(),loadOperationRecords(),loadFiles()]);
+if (currentView !== "knowledge") refreshHistoryLearning();
+setInterval(() => {
+  if (!document.hidden && historyJobState !== "running") refreshHistoryLearning();
+},10000);
+setInterval(() => { if (!document.hidden) loadAutomationStatus(); },10000);
+document.addEventListener("visibilitychange",() => { if (!document.hidden) loadAutomationStatus(); });
+setInterval(() => {
+  if (currentView === "operations" && !recordLoading && !readingOlderRecords && !document.hidden) {
+    loadOperationRecords(false,true);
+  }
+},15000);
+setInterval(loadStatus,45000);
+loadInstalledVersion();
+checkUpdate();
+setInterval(checkUpdate,60 * 60 * 1000);
+</script>
+</body>
+</html>
