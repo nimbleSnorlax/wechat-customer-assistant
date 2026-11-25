@@ -160,7 +160,7 @@ def contact_search_text(text):
     return "".join(unicodedata.normalize("NFKC", text).casefold().split())
 
 
-def search_contact_directory(config_path, profile, query):
+def search_contact_directory(config_path, profile, query, *, exact=False):
     needle = contact_search_text(query)
     if not needle:
         return {"people": []}
@@ -169,6 +169,13 @@ def search_contact_directory(config_path, profile, query):
         with contact_directory(config_path, profile) as (connection, owner):
             contacts = directory_contacts(connection, profile, owner)
             unique_aliases = unique_contact_aliases(contacts)
+            if exact:
+                named = [(name, alias) for name, alias, nickname, _, _ in contacts
+                         if needle in {contact_search_text(name), contact_search_text(nickname)}]
+                if len(named) != 1 or named[0][1] not in unique_aliases:
+                    return {"people": []}
+                name, alias = named[0]
+                return {"people": [{"id": f"uia:{owner}:{alias}", "name": name}]}
             for name, alias, nickname, username, _ in contacts:
                 if alias not in unique_aliases:
                     continue
@@ -432,7 +439,8 @@ if __name__ == "__main__":
         elif selection.get("mode") == "tags":
             result = read_contact_tag_catalog(sys.argv[1], selection["owner"])
         elif selection.get("mode") == "contacts":
-            result = search_contact_directory(sys.argv[1], selection["owner"], selection["query"])
+            result = search_contact_directory(sys.argv[1], selection["owner"], selection["query"],
+                                              exact=selection.get("exact") is True)
         else:
             result = own_replies(sys.argv[1], selection["chats"], selection["days"], selection.get("owner"))
     except ContactDirectoryError as error:

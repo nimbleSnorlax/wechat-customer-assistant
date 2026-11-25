@@ -43,9 +43,8 @@ h3 { font-size:1.06rem }
 small,.small { font-size:var(--small); color:var(--muted) }
 .muted { color:var(--muted) }
 .shell { min-height:100vh }
-.workspace-shell { min-width:0 }
-.workspace-shell[data-current-view="setup"] { min-block-size:100dvh; display:flex; flex-direction:column }
-.workspace-shell[data-current-view="setup"] .workspace-header { flex:none }
+.workspace-shell { display:flex; flex-direction:column; min-width:0; min-block-size:100dvh }
+.workspace-header { flex:none }
 .sidebar { display:none; position:fixed; inset-block:0; inset-inline-start:0; z-index:30;
   width:min(var(--sidebar-width),calc(100vw - var(--tap))); background:var(--side-bg); color:var(--side-ink);
   overflow:auto; color-scheme:dark }
@@ -150,8 +149,10 @@ small,.small { font-size:var(--small); color:var(--muted) }
   margin-inline-end:var(--space-1); border-radius:50%; background:currentColor }
 .workspace-tab .tab-close { min-width:1.8rem; padding-inline:var(--space-1); font-size:1rem; color:var(--muted) }
 .workspace-tab button:focus-visible { outline-offset:-.16rem }
-main { min-width:0; width:100%; max-width:104rem; padding:var(--space-3) var(--space-3) var(--space-6); margin-inline:auto }
-.workspace-shell[data-current-view="setup"] main { display:grid; flex:1; max-width:none; padding:0 }
+main { display:grid; flex:1; grid-template-columns:minmax(0,1fr); min-width:0; width:100%;
+  padding:var(--space-3) var(--space-3) var(--space-6) }
+main > [data-panel] { display:grid; grid-template-columns:minmax(0,1fr); min-width:0 }
+.workspace-shell[data-current-view="setup"] main { padding:0 }
 .account-tools { display:flex; gap:var(--space-2); flex-wrap:wrap }
 .account-tools + .small { display:block; margin-block-start:var(--space-2) }
 .update-strip { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-2);
@@ -171,7 +172,7 @@ main { min-width:0; width:100%; max-width:104rem; padding:var(--space-3) var(--s
 .card-head h2 + p { margin-top:var(--space-1) }
 .panel-body { padding:var(--space-4); display:grid; gap:var(--space-4) }
 .settings-grid { display:grid; gap:var(--space-4) }
-.history-library { display:grid; gap:var(--space-4) }
+.history-library { grid-template-rows:auto minmax(0,1fr); gap:var(--space-4) }
 .knowledge-history { display:grid; align-items:start; gap:var(--space-3); padding:var(--space-4) }
 .knowledge-history-info { display:grid; gap:var(--space-1); min-width:0 }
 #learning-status:empty, #history-card-feedback:empty { display:none }
@@ -199,7 +200,8 @@ main { min-width:0; width:100%; max-width:104rem; padding:var(--space-3) var(--s
 .card-use-cell { color:var(--muted); font-size:var(--small); min-width:0 }
 .history-card-editor .card-use-cell[data-enabled="true"] { color:var(--success) }
 .knowledge-pagination { display:flex; flex-wrap:wrap; align-items:center; justify-content:end; gap:var(--space-2) }
-.knowledge-narrow { width:min(100%,50rem) }
+.model-fields { display:grid; align-content:start; gap:var(--space-4); min-width:0 }
+.model-fields > :empty { display:none }
 .tone-fields { display:grid; gap:var(--space-4) }
 .knowledge-upload { border:1px solid var(--line); border-radius:var(--radius-2) }
 .knowledge-upload > summary { min-height:var(--tap); padding:var(--space-3); font-weight:650 }
@@ -214,7 +216,6 @@ main { min-width:0; width:100%; max-width:104rem; padding:var(--space-3) var(--s
 .history-spinner { display:inline-block; flex:none; width:1em; height:1em; margin-block:.25em; border:.14em solid var(--line); border-block-start-color:var(--accent); border-radius:50%; animation:history-spin 900ms linear infinite }
 @keyframes history-spin { to { transform:rotate(360deg) } }
 @media (prefers-reduced-motion:reduce) { .history-spinner { animation:none } }
-[data-panel="setup"] { display:grid; min-width:0 }
 .setup-card { display:flex; flex-direction:column; border:0; border-radius:0 }
 .setup-card > .panel-body { display:flex; flex-direction:column; flex:1; min-width:0 }
 .setup-card .setup-stage { flex:1; align-content:start }
@@ -229,7 +230,7 @@ main { min-width:0; width:100%; max-width:104rem; padding:var(--space-3) var(--s
 .setup-account,.setup-contact { overflow-wrap:anywhere; padding:var(--space-3); background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-2) }
 .setup-account[data-ready="true"] { color:var(--success); font-weight:700 }
 .setup-actions { display:flex; gap:var(--space-2); flex-wrap:wrap }
-.setup-history { display:grid; gap:var(--space-3); width:min(100%,50rem); padding:var(--space-4); border:1px solid var(--line); border-radius:var(--radius-2); background:var(--surface) }
+.setup-history { display:grid; gap:var(--space-3); padding:var(--space-4); border:1px solid var(--line); border-radius:var(--radius-2); background:var(--surface) }
 .setup-history p:empty { display:none }
 @media(min-width:36rem) { .setup-steps { grid-auto-flow:column; grid-auto-columns:minmax(0,1fr) } }
 .inline { display:flex; flex-wrap:wrap; gap:var(--space-2); align-items:center }
@@ -314,7 +315,8 @@ legend { margin-bottom:var(--space-2) }
 @media(min-width:66rem) {
   main { padding:var(--space-4) var(--space-5) var(--space-6) }
 
-  .settings-grid { grid-template-columns:minmax(0,1.15fr) minmax(0,1fr); align-items:start }
+  .settings-grid { grid-template-columns:minmax(0,1.15fr) minmax(0,1fr) }
+  #model-form .settings-grid { grid-template-columns:repeat(2,minmax(0,1fr)); align-items:start }
 }
 </style>
 </head>
@@ -429,7 +431,6 @@ legend { margin-bottom:var(--space-2) }
             </div>
             <div class="setup-ai" id="setup-ai-fields" hidden>
               <div class="field"><label for="setup-model-url">模型接口地址</label><input class="input" id="setup-model-url" type="url" maxlength="300" placeholder="https://模型接口地址/v1"></div>
-              <div class="field"><label for="setup-model-name">模型名称</label><input class="input" id="setup-model-name" maxlength="120"></div>
               <div class="field"><label for="setup-api-key">AI Key</label>
                 <div class="model-key-saved" id="setup-key-saved" hidden><strong>AI Key 已配置</strong><button class="btn sm" id="setup-key-change" type="button">更换 Key</button></div>
                 <div class="model-key-editor" id="setup-key-editor">
@@ -441,16 +442,31 @@ legend { margin-bottom:var(--space-2) }
                 </div>
                 <small id="setup-key-hint">填写模型服务提供的 Key，保存在本机。</small>
               </div>
+              <div class="field">
+                <label for="setup-model-name" id="setup-model-label">模型</label>
+                <select class="input" id="setup-model-list" hidden></select>
+                <input class="input" id="setup-model-name" maxlength="120" placeholder="输入服务商的模型名称">
+                <div class="inline">
+                  <button class="btn sm" type="button" id="setup-load-models">获取模型列表</button>
+                  <button class="btn sm" type="button" id="setup-test-model">测试连接</button>
+                </div>
+                <span class="small" id="setup-model-feedback" role="status"></span>
+              </div>
               <label class="choice"><input type="checkbox" id="setup-mimic">模仿我的回复语气</label>
             </div>
           </section>
           <section class="setup-stage" data-setup-step="2" hidden>
             <h3 tabindex="-1">用另一个微信号测试</h3>
             <div class="field"><label for="setup-contact-query">测试微信昵称或备注</label>
-              <input class="input" id="setup-contact-query" type="search" maxlength="100" placeholder="输入联系人昵称">
+              <input class="input" id="setup-contact-query" type="search" maxlength="80" placeholder="输入微信里显示的昵称或备注">
+              <small>填写后可以直接完成配置，工作台会从本机通讯录匹配联系人。</small>
             </div>
-            <div class="inline"><button class="btn" type="button" id="setup-find-contact">搜索联系人</button></div>
-            <div class="choices" id="setup-contact-results" aria-label="搜索结果"></div>
+            <div class="inline">
+              <button class="btn" type="button" id="setup-find-contact">搜索联系人</button>
+              <button class="btn" type="button" id="setup-current-contact">读取当前私聊</button>
+            </div>
+            <p class="hint">搜不到时，先在电脑版微信打开测试好友的私聊，再点「读取当前私聊」。</p>
+            <div class="choices" id="setup-contact-results" aria-label="联系人结果"></div>
             <p class="setup-contact" id="setup-contact-selection" role="status">请选择一个测试联系人。</p>
           </section>
           <section class="setup-stage" data-setup-step="3" hidden>
@@ -570,24 +586,35 @@ legend { margin-bottom:var(--space-2) }
       </div>
     </section>
     <section data-panel="ai" hidden>
-        <form class="card knowledge-narrow" id="model-form">
+        <form class="card" id="model-form">
           <div class="card-head form-head"><h2>AI 配置</h2></div>
           <div class="panel-body">
-            <div class="split-field">
-              <div class="field"><label for="model-url">模型接口地址</label><input class="input" id="model-url" type="url" maxlength="300" placeholder="https://你的模型服务/v1" required></div>
-              <div class="field"><label for="model-name">模型名称</label><input class="input" id="model-name" maxlength="120" placeholder="填入服务商的模型名称" required></div>
-            </div>
-            <div class="field"><label for="reply-api-key">AI Key</label>
-              <div class="model-key-saved" id="reply-key-saved" hidden><strong>AI Key 已配置</strong><button class="btn sm" id="reply-key-change" type="button">更换 Key</button></div>
-              <div class="model-key-editor" id="reply-key-editor">
-                <div class="model-key-input">
-                  <input class="input" id="reply-api-key" type="password" autocomplete="new-password" maxlength="4096" aria-describedby="model-status">
-                  <button class="btn" id="reply-key-show" type="button" aria-controls="reply-api-key">显示</button>
+            <div class="settings-grid">
+              <div class="model-fields">
+                <div class="field"><label for="model-url">模型接口地址</label><input class="input" id="model-url" type="url" maxlength="300" placeholder="https://你的模型服务/v1" required></div>
+                <div class="field"><label for="reply-api-key">AI Key</label>
+                  <div class="model-key-saved" id="reply-key-saved" hidden><strong>AI Key 已配置</strong><button class="btn sm" id="reply-key-change" type="button">更换 Key</button></div>
+                  <div class="model-key-editor" id="reply-key-editor">
+                    <div class="model-key-input">
+                      <input class="input" id="reply-api-key" type="password" autocomplete="new-password" maxlength="4096" aria-describedby="model-status">
+                      <button class="btn" id="reply-key-show" type="button" aria-controls="reply-api-key">显示</button>
+                    </div>
+                    <button class="btn sm" id="reply-key-cancel" type="button" hidden>取消更换</button>
+                  </div>
                 </div>
-                <button class="btn sm" id="reply-key-cancel" type="button" hidden>取消更换</button>
+                <p class="small" id="model-status">正在检查模型配置</p>
+              </div>
+              <div class="field">
+                <label for="model-name" id="model-model-label">模型</label>
+                <select class="input" id="model-model-list" hidden></select>
+                <input class="input" id="model-name" maxlength="120" placeholder="输入服务商的模型名称">
+                <div class="inline">
+                  <button class="btn sm" type="button" id="model-load-models">获取模型列表</button>
+                  <button class="btn sm" type="button" id="model-test-model">测试连接</button>
+                </div>
+                <span class="small" id="model-model-feedback" role="status"></span>
               </div>
             </div>
-            <p class="small" id="model-status">正在检查模型配置</p>
             <div class="form-actions"><button class="btn primary" id="save-model" type="submit" disabled>保存 AI 配置</button><span class="local-status small" id="model-feedback" role="status"></span></div>
           </div>
         </form>
@@ -691,7 +718,7 @@ legend { margin-bottom:var(--space-2) }
             <button class="btn sm" type="button" id="more-history-cards">下一页</button>
           </div>
         </div>
-        <div class="panel-body knowledge-narrow" id="knowledge-tone-panel" role="tabpanel" aria-labelledby="knowledge-tone-tab" hidden>
+        <div class="panel-body" id="knowledge-tone-panel" role="tabpanel" aria-labelledby="knowledge-tone-tab" hidden>
           <form class="tone-fields" id="learned-tone-form">
             <div class="field">
               <label class="choice"><input type="checkbox" id="mimic-tone" aria-describedby="mimic-tone-hint" checked>模仿我的回复语气</label>
@@ -753,7 +780,7 @@ legend { margin-bottom:var(--space-2) }
         <div class="panel-body" id="knowledge-files-panel" role="tabpanel" aria-labelledby="knowledge-files-tab" hidden>
           <details class="knowledge-upload">
             <summary>上传资料</summary>
-            <form class="panel-body knowledge-narrow" id="upload-form">
+            <form class="panel-body" id="upload-form">
               <div class="field"><label for="file">选择文件</label><input id="file" type="file" accept=".txt,.md,.csv,.docx,.pdf" required><small>支持 TXT、Markdown、CSV、Word 和 PDF，单份最多 8 MB。</small></div>
               <div class="field">
                 <label for="knowledge-triggers">触发词（可选）</label>
@@ -927,6 +954,7 @@ function show(view, focusTab = false) {
   history.replaceState(null, "", "#" + view);
   renderWorkspaceTabs(focusTab);
   paintHistoryActivity();
+  if (settingsReady) loadVisibleModelPicker();
   if (view === "knowledge") {
     refreshHistoryLearning();
     if (!historyCardsLoaded) loadHistoryCards();
@@ -1219,6 +1247,7 @@ function applyAccountStatus(data) {
       : found ? "微信已登录，请点「识别微信」获取昵称。"
       : "请打开电脑版微信并完成登录。");
     renderSetupKeyHint();
+    if (settingsReady) loadVisibleModelPicker();
 }
 function describeModel() {
   const existing = configuredModelKey($("model-url").value);
@@ -1265,6 +1294,7 @@ for (const [prefix,refresh] of [["setup",renderSetupKeyHint],["reply",describeMo
   $(prefix + "-key-cancel").addEventListener("click",() => {
     resetModelKey(prefix);
     refresh();
+    loadVisibleModelPicker();
     $(prefix + "-key-change").focus();
   });
   show.addEventListener("click",() => {
@@ -1273,6 +1303,147 @@ for (const [prefix,refresh] of [["setup",renderSetupKeyHint],["reply",describeMo
     show.textContent = revealed ? "隐藏" : "显示";
   });
 }
+function modelPicker(prefix, urlId, keyPrefix, modelId) {
+  const url = $(urlId);
+  const key = $(keyPrefix + "-api-key");
+  const model = $(modelId);
+  const list = $(prefix + "-model-list");
+  const label = $(prefix + "-model-label");
+  const refresh = $(prefix + "-load-models");
+  const test = $(prefix + "-test-model");
+  const feedback = prefix + "-model-feedback";
+  let generation = 0;
+  let testRequest = 0;
+  let listed = false;
+  let loading = false;
+  let checking = false;
+  const connection = () => ({baseUrl:normalizedModelUrl(url.value), apiKey:key.value.trim()});
+
+  function readyToList() {
+    if (!url.value.trim() || !url.validity.valid) return false;
+    const parsed = new URL(url.value);
+    const local = ["localhost","127.0.0.1","[::1]"].includes(parsed.hostname);
+    return (parsed.protocol === "https:" || local && parsed.protocol === "http:") &&
+      (!editingModelKeys.has(keyPrefix) || Boolean(key.value.trim())) &&
+      (local || Boolean(key.value.trim()) || configuredModelKey(url.value));
+  }
+
+  function showManual(manual) {
+    model.hidden = !manual;
+    label.htmlFor = manual ? model.id : list.id;
+  }
+
+  function reset() {
+    generation += 1;
+    listed = loading = false;
+    resetTest();
+    list.hidden = true;
+    list.replaceChildren();
+    refresh.disabled = false;
+    refresh.textContent = "获取模型列表";
+    refresh.removeAttribute("aria-busy");
+    showManual(true);
+    note(feedback,"");
+  }
+
+  async function load(manual = false) {
+    if (loading || listed && !manual) return;
+    if (!readyToList()) {
+      if (manual) note(feedback,"请先填写有效的接口地址和 AI Key。本机免密接口可留空。",true);
+      return;
+    }
+    const attempt = generation;
+    listed = loading = true;
+    refresh.disabled = true;
+    refresh.textContent = "正在获取…";
+    refresh.setAttribute("aria-busy","true");
+    note(feedback,"");
+    try {
+      const {models} = await jsonRequest("/api/model/list","POST",connection());
+      if (attempt !== generation) return;
+      list.hidden = !models.length;
+      list.replaceChildren(new Option("请选择模型",""), ...models.map(name => new Option(name,name)), new Option("手动输入…",""));
+      if (models.includes(model.value)) list.value = model.value;
+      else if (model.value) list.selectedIndex = list.options.length - 1;
+      showManual(!models.length || Boolean(model.value && !models.includes(model.value)));
+      note(feedback,models.length ? "" : "服务商没有返回模型，可以手动输入并测试。");
+    } catch(error) {
+      if (attempt === generation) note(feedback,error.message,true);
+    } finally {
+      if (attempt === generation) {
+        loading = false;
+        refresh.disabled = false;
+        refresh.textContent = "获取模型列表";
+        refresh.removeAttribute("aria-busy");
+      }
+    }
+  }
+
+  async function check() {
+    const name = model.value.trim();
+    if (!name) return note(feedback,"请选择或输入要测试的模型。",true);
+    if (!readyToList()) return note(feedback,"请先填写有效的接口地址和 AI Key。本机免密接口可留空。",true);
+    if (checking) return;
+    const attempt = ++testRequest;
+    checking = true;
+    test.disabled = true;
+    test.textContent = "正在测试…";
+    test.setAttribute("aria-busy","true");
+    note(feedback,"");
+    try {
+      const result = await jsonRequest("/api/model/test","POST",{...connection(), model:name});
+      if (attempt === testRequest)
+        note(feedback,"连接正常 · " + (result.durationMs / 1000).toFixed(1) + " 秒");
+    } catch(error) {
+      if (attempt === testRequest) note(feedback,error.message,true);
+    } finally {
+      if (attempt === testRequest) {
+        checking = false;
+        test.disabled = false;
+        test.textContent = "测试连接";
+        test.removeAttribute("aria-busy");
+      }
+    }
+  }
+
+  for (const input of [url,key]) {
+    input.addEventListener("input",reset);
+    input.addEventListener("change",() => void load());
+  }
+  model.addEventListener("input",() => {
+    resetTest();
+    note(feedback,"");
+  });
+  list.addEventListener("change",() => {
+    const manual = list.selectedIndex === list.options.length - 1;
+    model.value = list.value;
+    showManual(manual);
+    resetTest();
+    note(feedback,"");
+    if (manual) model.focus();
+    else if (list.value) void check();
+  });
+  function resetTest() {
+    testRequest += 1;
+    checking = false;
+    test.disabled = false;
+    test.textContent = "测试连接";
+    test.removeAttribute("aria-busy");
+  }
+  refresh.addEventListener("click",() => void load(true));
+  test.addEventListener("click",() => void check());
+  return {load,reset};
+}
+const modelPickers = {
+  setup: modelPicker("setup","setup-model-url","setup","setup-model-name"),
+  ai: modelPicker("model","model-url","reply","model-name")
+};
+function loadVisibleModelPicker() {
+  if (currentView === "ai") void modelPickers.ai.load();
+  if (currentView === "setup" && setupStep === 1 && setupMode() === "model")
+    void modelPickers.setup.load();
+}
+
 function setupMode() { return document.querySelector('input[name="setup-mode"]:checked').value; }
 function renderSetupKeyHint() {
   const existing = configuredModelKey($("setup-model-url").value);
@@ -1290,6 +1461,7 @@ function renderSetupMode() {
   $("setup-history-fields").hidden = !model;
   $("setup-enter-reply").classList.toggle("primary",!model);
   renderSetupKeyHint();
+  if (settingsReady) loadVisibleModelPicker();
 }
 function setupModelFields() {
   return {baseUrl:$("setup-model-url").value,model:$("setup-model-name").value,apiKey:$("setup-api-key").value};
@@ -1306,25 +1478,31 @@ function showSetupStep(step, focus = true) {
   $("setup-forward").textContent = step === 2 ? "完成配置" : "下一步";
   note("setup-feedback","");
   paintHistoryActivity();
+  if (settingsReady) loadVisibleModelPicker();
   if (focus) document.querySelector('[data-setup-step="' + step + '"] h3').focus();
 }
 function renderSetupContact() {
+  const name = $("setup-contact-query").value.trim();
   note("setup-contact-selection",setupContact ? "已选 " + setupContact.name +
-    (setupContact.tail ? "（末四位 " + setupContact.tail + "）" : "") : "请选择一个测试联系人。");
+    (setupContact.tail ? "（末四位 " + setupContact.tail + "）" : "") :
+    name ? "已填写 " + name + "，待匹配" : "请输入测试好友的昵称或备注。");
 }
 function loadSetupFields(reply) {
   setupSavedModelUrl = reply.baseUrl;
   $("setup-fixed").value = reply.fixedText;
   $("setup-model-url").value = reply.baseUrl;
   $("setup-model-name").value = reply.model;
+  modelPickers.setup.reset();
   $("setup-mimic").checked = Boolean((reply.setupComplete || reply.model) && reply.mimicTone);
   document.querySelector('input[name="setup-mode"][value="' + (reply.mode === "model" ? "model" : "fixed") + '"]').checked = true;
   setupContact = reply.testContact || (reply.targets?.length === 1 ? reply.targets[0] : null);
-  if (setupContact) $("setup-contact-query").value = setupContact.name;
+  $("setup-contact-query").value = setupContact?.name || reply.testContactName || "";
   renderSetupContact();
   renderSetupMode();
-  if (reply.setupComplete && setupContact) {
-    note("setup-complete-info","测试联系人为 " + setupContact.name + "。可在回复设置中开启或调整自动回复。");
+  if (reply.setupComplete) {
+    note("setup-complete-info", setupContact
+      ? "测试联系人为 " + setupContact.name + "。可在回复设置中开启或调整自动回复。"
+      : "已保存测试昵称 " + reply.testContactName + "。开启自动回复后，会用匹配到的新私聊确认联系人。");
     showSetupStep(3,false);
   }
 }
@@ -1345,26 +1523,33 @@ $("setup-back").addEventListener("click",() => showSetupStep(setupStep - 1));
 $("setup-restart").addEventListener("click",() => showSetupStep(0));
 $("setup-model-url").addEventListener("input",renderSetupKeyHint);
 document.querySelectorAll('input[name="setup-mode"]').forEach(input => input.addEventListener("change",renderSetupMode));
+$("setup-contact-query").addEventListener("input", () => {
+  setupContact = null;
+  $("setup-contact-results").replaceChildren();
+  renderSetupContact();
+});
 $("setup-contact-query").addEventListener("keydown",event => {
   if (event.key !== "Enter" || event.isComposing) return;
   event.preventDefault();
   $("setup-find-contact").click();
 });
-$("setup-find-contact").addEventListener("click",() => {
-  const query = $("setup-contact-query").value.trim();
-  if (!query) {
-    setupNotify("请输入测试微信昵称或备注。",true);
-    $("setup-contact-query").focus();
-    return;
-  }
-  pending($("setup-find-contact"),"正在搜索",async () => {
+const setupFindContact = $("setup-find-contact");
+const setupCurrentContact = $("setup-current-contact");
+function loadSetupContactChoices(button, otherButton, label, getContacts, emptyMessage) {
+  return pending(button, label, async () => {
+    const startingQuery = $("setup-contact-query").value;
+    otherButton.disabled = true;
+    $("setup-contact-results").replaceChildren();
+    setupNotify("");
     try {
-      const contacts = await request("/api/contacts?setup=1&q=" + encodeURIComponent(query));
+      const contacts = await getContacts();
+      if ($("setup-contact-query").value !== startingQuery) return;
       $("setup-contact-results").replaceChildren(...contacts.map(contact => {
         const row = element("div","detail-row");
         const name = contact.name + (contact.tail ? " · 末四位 " + contact.tail : "");
         const pick = action("选用","btn sm",() => {
           setupContact = contact;
+          $("setup-contact-query").value = contact.name;
           renderSetupContact();
           $("setup-contact-results").replaceChildren();
           $("setup-forward").focus();
@@ -1374,9 +1559,29 @@ $("setup-find-contact").addEventListener("click",() => {
         row.append(element("span","",name),pick);
         return row;
       }));
-      setupNotify(contacts.length ? "" : "没有找到联系人，请检查昵称或微信备注。");
-    } catch(error) { setupNotify(error.message,true); }
+      setupNotify(contacts.length ? "" : emptyMessage);
+    } catch (error) {
+      setupNotify(error.message, true);
+    } finally {
+      otherButton.disabled = false;
+    }
   });
+}
+setupFindContact.addEventListener("click", () => {
+  const query = $("setup-contact-query").value.trim();
+  if (!query) {
+    setupNotify("请输入测试微信昵称或备注。",true);
+    $("setup-contact-query").focus();
+    return;
+  }
+  loadSetupContactChoices(setupFindContact, setupCurrentContact, "正在搜索",
+    () => request("/api/contacts?setup=1&q=" + encodeURIComponent(query)),
+    "未找到联系人，可以试试「读取当前私聊」。");
+});
+setupCurrentContact.addEventListener("click", () => {
+  loadSetupContactChoices(setupCurrentContact, setupFindContact, "正在读取",
+    () => jsonRequest("/api/setup/current-contact", "POST", {}),
+    "未读到联系人，请先打开测试好友的私聊，再试一次。");
 });
 $("setup-form").addEventListener("submit",event => {
   event.preventDefault();
@@ -1409,8 +1614,9 @@ $("setup-form").addEventListener("submit",event => {
     }
     showSetupStep(2);
   } else if (setupStep === 2) {
-    if (!setupContact) {
-      setupNotify("请先选一个测试微信联系人。",true);
+    const testContactName = $("setup-contact-query").value.trim();
+    if (!testContactName) {
+      setupNotify("请填写测试好友的昵称或备注。",true);
       $("setup-contact-query").focus();
       return;
     }
@@ -1419,7 +1625,7 @@ $("setup-form").addEventListener("submit",event => {
         const mode = setupMode();
         const fields = mode === "fixed" ? {fixedText:$("setup-fixed").value} :
           {...setupModelFields(),mimicTone:$("setup-mimic").checked};
-        await jsonRequest("/api/setup","PUT",{...fields,mode,testContact:setupContact});
+        await jsonRequest("/api/setup","PUT",{...fields,mode,testContact:setupContact,testContactName});
         resetModelKey("setup");
         await Promise.all([loadSettings(),loadStatus()]);
         showSetupStep(3);
@@ -1723,6 +1929,7 @@ async function loadSettings() {
     $("instruction").value = data.reply.instruction;
     $("model-url").value = data.reply.baseUrl;
     $("model-name").value = data.reply.model;
+    modelPickers.ai.reset();
     if (!settingsReady) $("style-model").checked = Boolean(data.reply.baseUrl && data.reply.model);
     loadSetupFields(data.reply);
     $("group-name").value = data.group.name;
@@ -1737,6 +1944,7 @@ async function loadSettings() {
     paintAutomationStatus("reply");
     paintAutomationStatus("group");
     describeModel();
+    loadVisibleModelPicker();
     renderTone();
     renderGroupAdviser();
     if (data.group.reviewScope) note("group-feedback","建群范围已改为符合条件的私聊消息。请确认对接人和条件，再开启并保存。");
@@ -1872,6 +2080,7 @@ $("model-form").addEventListener("submit",event => {
       if ($("model-name").value === model) $("model-name").value = saved.model;
       $("setup-model-url").value = saved.baseUrl;
       $("setup-model-name").value = saved.model;
+      modelPickers.setup.reset();
       describeModel();
       renderSetupKeyHint();
       note("model-feedback","AI 配置已保存。");

@@ -45,21 +45,37 @@ internal sealed class BridgeSession : IDisposable
     {
         if (!await client.SearchFriend(name)) return null;
         var header = await client.GetTitle();
-        if (header.HeaderType is not (ChatType.好友 or ChatType.企业微信) || await client.GetOnlyTitle() != name)
+        if (header.HeaderType is not (ChatType.好友 or ChatType.企业微信) || header.Title != name)
             return null;
         return await client.MessageMonitor.ReadCurrentFriendInfo(header);
     }
 
     private static bool ValidAlias(string value) => Regex.IsMatch(value ?? "", @"\A[A-Za-z0-9_-]{1,60}\z");
 
-    internal async Task<object> SearchContacts(string query)
+    internal async Task<object> SearchContacts(string? query)
     {
         var owner = Client.Alias;
         if (!ValidAlias(owner)) throw new InvalidOperationException("The WeChat account could not be identified.");
-        var match = await FindContact(Client, query);
+
+        string? name = query;
+        FriendInfo? match;
+        if (query is null)
+        {
+            var header = await Client.GetTitle();
+            name = header.Title?.Trim();
+            match = header.HeaderType is ChatType.好友 or ChatType.企业微信 &&
+                name is { Length: > 0 and <= 80 }
+                    ? await Client.MessageMonitor.ReadCurrentFriendInfo(header)
+                    : null;
+        }
+        else
+        {
+            match = await FindContact(Client, query);
+        }
+
         var people = match is not null && ValidAlias(match.WxId) &&
-            !match.WxId.Equals(owner, StringComparison.OrdinalIgnoreCase) && query.Length <= 80
-                ? new object[] { new { id = $"uia:{owner}:{match.WxId}", name = query } }
+            !match.WxId.Equals(owner, StringComparison.OrdinalIgnoreCase) && name is { Length: > 0 and <= 80 }
+                ? new object[] { new { id = $"uia:{owner}:{match.WxId}", name } }
                 : Array.Empty<object>();
         return new { name = Client.NickName, people };
     }

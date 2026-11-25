@@ -6,6 +6,7 @@ using FlaUI.Core.AutomationElements;
 using FlaUI.UIA3;
 using Microsoft.Win32;
 using WeAutoCommon.Utils;
+using WeChatAuto.Utils;
 
 if (args is ["--group-worker", var port] && int.TryParse(port, out var portNumber))
 {
@@ -35,10 +36,11 @@ try
         Console.WriteLine("WECHAT_RESULT " + JsonSerializer.Serialize(await session.ReadTagDirectory()));
         return 0;
     }
-    if (args is ["--contacts", var query])
+    if (args is ["--contacts", _] or ["--current-contact"])
     {
         using var session = BridgeSession.Open();
-        Console.WriteLine("WECHAT_RESULT " + JsonSerializer.Serialize(await session.SearchContacts(query)));
+        Console.WriteLine("WECHAT_RESULT " + JsonSerializer.Serialize(
+            await session.SearchContacts(args.Length == 2 ? args[1] : null)));
         return 0;
     }
     var windows = WeChatWindows.CountLoggedIn();
@@ -209,11 +211,7 @@ internal static class WeChatWindows
                 var handle = process.MainWindowHandle;
                 if (handle == IntPtr.Zero) continue;
                 var window = automation.FromHandle(handle);
-                var toolbar = window?.FindFirstDescendant(condition => condition.ByControlType(ControlType.ToolBar)
-                    .And(condition.ByAutomationId("MainView.main_tabbar")
-                        .Or(condition.ByName(WeChatConstant.WECHAT_NAVIGATION_NAVIGATION))
-                        .Or(condition.ByName("导航")).Or(condition.ByName("導覽")).Or(condition.ByName("Navigation"))));
-                if (window is not null && toolbar is not null) yield return window;
+                if (WeChatAction.FindNavigationBar(window) is not null) yield return window;
             }
         }
     }

@@ -12,8 +12,8 @@ internal static class ContactTagCatalog
     private const string SidebarClass = "mmui::ContactsManagerControlView";
     private const string FolderClass = "mmui::ContactsManagerControlFolderCell";
     private const string CreateTagClass = "mmui::ContactsManagerControlCreateLabelCell";
-    private static readonly string[] TagFolderNames = ["标签", "標籤", "Tags"];
-    private static readonly string[] ManageContactsNames = ["通讯录管理", "通訊錄管理", "Manage Contacts"];
+    private static readonly string[] TagFolderNames = ["标签", "標籤", "Tags", "Labels"];
+    private static readonly string[] ManageContactsNames = ["通讯录管理", "通訊錄管理", "聯絡人管理", "Manage Contacts", "Contacts Management"];
 
     internal static async Task<string[]> Read(WeChatClient client)
     {

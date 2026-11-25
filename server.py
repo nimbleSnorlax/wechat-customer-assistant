@@ -88,7 +88,7 @@ DEFAULTS = {
         "tone": "亲切专业", "instruction": "", "historyProfile": "", "model": "", "baseUrl": "",
         "enabled": False, "targets": [], "mode": "fixed",
         "scope": "contacts", "tags": [], "tagRule": "include",
-        "mimicTone": True, "contextMessages": 20, "setupComplete": False, "testContact": None,
+        "mimicTone": True, "contextMessages": 20, "setupComplete": False, "testContact": None, "testContactName": "",
         "fixedText": "您好，收到您的消息了。我确认后回复您。",
     },
     "group": {
@@ -438,9 +438,46 @@ def read_wechat_tags():
     return {} if catalog.get("profile") and catalog["profile"] != history_profile() else catalog
 
 
+def test_contact_waiting(reply):
+    return (reply["scope"] == "contacts" and not reply["targets"] and not reply["testContact"]
+            and bool(reply["testContactName"]))
+
+
+def bound_test_contact(reply):
+    if not test_contact_waiting(reply):
+        return None
+    profile = history_profile()
+    if not profile:
+        return None
+    with closing(database()) as connection:
+        row = connection.execute("SELECT value FROM settings WHERE name = 'test_contact_binding'").fetchone()
+    binding = json.loads(row["value"]) if row else {}
+    if binding.get("profile") == profile and binding.get("name") == reply["testContactName"]:
+        return binding["contact"]
+    return None
+
+
+def bind_test_contact(reply, profile, revision, person):
+    contact = group_contact(person)
+    binding = {"profile": profile, "name": reply["testContactName"], "contact": contact}
+    with closing(database()) as connection, connection:
+        connection.execute("BEGIN IMMEDIATE")
+        if (AUTOMATION_PAUSED.is_set() or WORKBENCH_EXIT.is_set() or history_profile() != profile
+                or automation_revision(read_settings()) != revision):
+            return False
+        existing = bound_test_contact(reply)
+        if existing:
+            return existing["id"] == contact["id"]
+        connection.execute("INSERT INTO settings VALUES ('test_contact_binding', ?) "
+                           "ON CONFLICT(name) DO UPDATE SET value=excluded.value",
+                           (json.dumps(binding, ensure_ascii=False),))
+    return True
+
+
 def reply_targets(reply, catalog=None):
     if reply["scope"] != "tags":
-        return reply["targets"]
+        contact = bound_test_contact(reply)
+        return [contact] if contact else reply["targets"]
     catalog = read_wechat_tags() if catalog is None else catalog
     tags = set(reply["tags"])
     include = reply.get("tagRule", "include") == "include"
@@ -505,13 +542,21 @@ def save_settings(section, value, *, completing_setup=False):
         tags = label_names(value.get("tags", previous["tags"]))
         targets = configured_reply_contacts(value.get("targets", previous["targets"]))
         test_contact = previous["testContact"]
+        test_contact_name = previous["testContactName"]
         if completing_setup:
-            test_contact = group_contact(value.get("testContact"))
+            test_contact = value["testContact"]
+            test_contact_name = value["testContactName"]
             if scope == "contacts" and (
                     not targets or (len(targets) == 1 and (not previous["setupComplete"]
                     or targets[0] == previous["testContact"]))):
-                if targets != [test_contact]:
+                new_targets = [test_contact] if test_contact else []
+                if targets != new_targets or not test_contact:
                     enabled = False
+                targets = new_targets
+        elif enabled and scope == "contacts" and not targets and not test_contact and test_contact_name:
+            test_contact = bound_test_contact(previous) or match_local_test_contact(history_profile(), test_contact_name)
+            if test_contact:
+                test_contact_name = test_contact["name"]
                 targets = [test_contact]
         supplied_key = text_field(value.get("apiKey", ""), 4096, "AI Key")
         fields = (
@@ -535,7 +580,7 @@ def save_settings(section, value, *, completing_setup=False):
                 raise AppError("启用排除规则前，请先刷新微信标签。")
             if enabled and not reply_targets({"scope": scope, "tags": tags, "tagRule": tag_rule}, catalog):
                 raise AppError("按当前标签规则，没有可以自动回复的联系人。")
-        elif enabled and not targets:
+        elif enabled and not (targets or test_contact_name and not test_contact):
             raise AppError("开启自动回复前，请先添加需要回复的联系人。")
         if (enabled or completing_setup) and mode == "model" and not (value["baseUrl"] and value["model"]):
             raise AppError("请先在「AI 配置」中设置模型，或先用固定话术测试。")
@@ -547,7 +592,7 @@ def save_settings(section, value, *, completing_setup=False):
                      mode=mode, targets=targets, scope=scope, tags=tags, tagRule=tag_rule,
                      mimicTone=mimic_tone, contextMessages=context_messages, backgroundReceive=True,
                      setupComplete=completing_setup or previous["setupComplete"],
-                     testContact=test_contact)
+                     testContact=test_contact, testContactName=test_contact_name)
     elif section == "group":
         previous = read_settings()["group"]
         enabled = value.get("enabled", previous["enabled"])
@@ -594,7 +639,7 @@ def save_settings(section, value, *, completing_setup=False):
             connection.execute("INSERT INTO settings VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET value=excluded.value",
                                ("model_credential", json.dumps(credential)))
         if completing_setup:
-            connection.execute("DELETE FROM settings WHERE name = 'setup_model'")
+            connection.execute("DELETE FROM settings WHERE name IN ('setup_model', 'test_contact_binding')")
     if not (reply_settings["enabled"] or settings["group"]["enabled"]):
         BACKGROUND_INBOX = {"revision": None, "started": 0, "seen": {}, "pending": {}}
     return value if section == "reply" else value | {"backgroundReceive": True}
@@ -864,10 +909,30 @@ def contact_results(query, *, setup=False):
     else:
         raise AppError("请先配置当前微信的本机只读查询，再搜索联系人。", 409)
     people = [group_contact(item) for item in directory["people"]]
-    if setup:
-        for person in people:
-            person["tail"] = person["id"].rsplit(":", 1)[-1][-4:]
-    return people
+    return setup_contact_choices(people) if setup else people
+
+
+def setup_contact_choices(people):
+    return [person | {"tail": person["id"].rsplit(":", 1)[-1][-4:]} for person in people]
+
+
+def setup_current_contact():
+    if not NATIVE_CONTACTS:
+        raise AppError("当前版本无法读取微信私聊，请使用桌面端。", 409)
+    directory = run_sdk_directory(("--current-contact",), 24)
+    return setup_contact_choices([group_contact(item) for item in directory["people"]])
+
+
+def match_local_test_contact(profile, name):
+    if not profile or not CLI_PYTHON.is_file():
+        return None
+    try:
+        found = read_local_directory(profile, "contacts", "暂时无法匹配本机微信联系人。", query=name, exact=True)
+        if history_profile() == profile and len(found["people"]) == 1:
+            return group_contact(found["people"][0])
+    except AppError:
+        pass
+    return None
 
 
 def complete_setup(value):
@@ -876,10 +941,19 @@ def complete_setup(value):
     status = read_account(force=True)
     if status["windows"] != 1 or not status["accounts"]:
         raise AppError("请先在首页识别当前登录的微信。", 409)
-    contact = group_contact(value.get("testContact"))
-    if contact["id"] == status["profile"]:
-        raise AppError("请选择另一个微信号作为测试联系人。")
-    return save_settings("reply", value | {"testContact": contact}, completing_setup=True)
+    contact = value.get("testContact")
+    if contact is None:
+        name = text_field(value.get("testContactName", ""), 80, "测试联系人昵称或备注", True)
+        contact = match_local_test_contact(status["profile"], name)
+    else:
+        contact = group_contact(contact)
+        name = contact["name"]
+    if contact:
+        native = NATIVE_CONTACT_ID.fullmatch(contact["id"])
+        if contact["id"] == status["profile"] or native and native[1].casefold() == native[2].casefold():
+            raise AppError("请选择另一个微信号作为测试联系人。")
+        name = contact["name"]
+    return save_settings("reply", value | {"testContact": contact, "testContactName": name}, completing_setup=True)
 
 
 def model_fields(value):
@@ -887,6 +961,57 @@ def model_fields(value):
     name = text_field(value.get("model"), 120, "模型名称", True)
     key = text_field(value.get("apiKey", ""), 4096, "AI Key")
     return base_url, name, key
+
+
+def model_connection(value):
+    base_url = validate_model_url(text_field(value.get("baseUrl"), 300, "模型地址", True))
+    key = text_field(value.get("apiKey", ""), 4096, "AI Key")
+    if key and not re.fullmatch(r"[\x21-\x7e]+", key):
+        raise AppError("请检查 AI Key 的格式。")
+    if not key:
+        stored = model_credential(base_url)
+        if stored:
+            key = unseal_model_key(stored)
+        elif base_url == read_settings()["reply"]["baseUrl"]:
+            key = os.environ.get("WECHAT_AI_API_KEY", "")
+    if not key and urllib.parse.urlsplit(base_url).hostname not in {"localhost", "127.0.0.1", "::1"}:
+        raise AppError("请先填写模型服务的 AI Key。")
+    return base_url, key
+
+
+def list_available_models(value):
+    base_url, key = model_connection(value)
+    headers = {"Accept": "application/json"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    target = base_url.removesuffix("/chat/completions") + "/models"
+    request = urllib.request.Request(target, headers=headers)
+    try:
+        with urllib.request.build_opener(NoRedirect()).open(request, timeout=12) as response:
+            payload = json.loads(response.read(2_000_000))
+        entries = payload["data"]
+        if not isinstance(entries, list):
+            raise ValueError("Invalid model list")
+        names = {item["id"] for item in entries if isinstance(item, dict) and isinstance(item.get("id"), str)
+                 and 0 < len(item["id"]) <= 120 and item["id"] == item["id"].strip()
+                 and item["id"].isprintable()}
+        return {"models": sorted(names, key=str.casefold)}
+    except urllib.error.HTTPError as error:
+        if error.code in (404, 405, 501):
+            raise AppError("服务商没有提供模型列表，可以手动填写模型名称。", 502) from error
+        hint = "，请检查接口地址和 Key" if error.code in (401, 403) else ""
+        raise AppError(f"读取模型列表失败（HTTP {error.code}{hint}）。", 502) from error
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise AppError("暂时无法读取模型列表，可以手动填写模型名称并测试。", 502) from error
+
+
+def test_model_connection(value):
+    base_url, key = model_connection(value)
+    name = text_field(value.get("model"), 120, "模型名称", True)
+    started = time.monotonic()
+    request_model({"baseUrl": base_url, "model": name},
+                  [{"role": "user", "content": "Reply with only OK."}], key=key, timeout=25)
+    return {"model": name, "durationMs": round((time.monotonic() - started) * 1000)}
 
 
 def save_model_configuration(value):
@@ -1290,7 +1415,8 @@ def automation_revision(settings, catalog=None):
 def automation_readiness(reply, group, selected_targets, catalog):
     model_ready = bool(reply["baseUrl"] and reply["model"])
     group_ready = bool(group["enabled"] and group["adviser"] and model_ready and not background_source_error())
-    reply_ready = bool(reply["enabled"] and selected_targets and (reply["mode"] == "fixed" or model_ready)
+    reply_ready = bool(reply["enabled"] and (selected_targets or test_contact_waiting(reply))
+                       and (reply["mode"] == "fixed" or model_ready)
                        and not background_configuration_error(reply, selected_targets, catalog))
     return reply_ready, group_ready
 
@@ -1361,7 +1487,7 @@ def history_private_contact(username):
         alias = row.get("alias") or username
         name = row.get("remark") or row.get("nick_name") or username
         if isinstance(alias, str) and isinstance(name, str):
-            return {"id": username, "alias": alias, "name": name}
+            return {"id": username, "alias": alias, "name": name, "nickname": row.get("nick_name") or ""}
     return None
 
 
@@ -1457,6 +1583,7 @@ def next_background_message(revision):
         if not (reply_ready or group_ready) or revision != automation_revision(settings, catalog):
             return None
         reply_ids, reply_aliases, reply_owners = background_contact_index(targets if reply_ready else [])
+        waiting_for_test_contact = reply_ready and not targets and test_contact_waiting(reply)
         adviser_id = group["adviser"]["id"] if group_ready else ""
         adviser_native = NATIVE_CONTACT_ID.fullmatch(adviser_id)
         native_owners = reply_owners | ({adviser_native[1].casefold()} if adviser_native else set())
@@ -1498,7 +1625,7 @@ def next_background_message(revision):
             chat = row.get("username")
             stamp, text = row.get("timestamp"), row.get("last_message")
             if (not isinstance(chat, str) or chat == profile or chat in SYSTEM_CONTACTS or chat.startswith("gh_")
-                    or (not (reply_aliases or group_ready) and chat not in reply_ids)
+                    or (not (reply_aliases or group_ready or waiting_for_test_contact) and chat not in reply_ids)
                     or type(stamp) is not int
                     or stamp > now + 30 or not isinstance(text, str)):
                 continue
@@ -1515,7 +1642,7 @@ def next_background_message(revision):
                 seen[chat] = fingerprint
                 continue
             check_group = group_ready and not reconnecting and chat != adviser_id
-            if (reply_aliases or check_group) and chat not in known_contacts:
+            if (reply_aliases or check_group or waiting_for_test_contact and not reconnecting) and chat not in known_contacts:
                 if lookups >= 3:
                     continue
                 lookups += 1
@@ -1526,6 +1653,13 @@ def next_background_message(revision):
             person = known_contacts.get(chat)
             alias = person["alias"].casefold() if person else ""
             reply_id = chat if chat in reply_ids else reply_aliases.get(alias)
+            test_match = (waiting_for_test_contact and not reconnecting and person
+                          and reply["testContactName"].strip().casefold() in {
+                              entry.strip().casefold() for entry in (person["name"], person.get("nickname", ""))
+                              if isinstance(entry, str)
+                          })
+            if test_match:
+                reply_id = chat
             customer = person if check_group and alias and alias not in (owner_alias, adviser_alias) else None
             if customer and customer["name"].casefold() in {owner_name, group["adviser"]["name"].casefold()}:
                 customer = None
@@ -1538,11 +1672,11 @@ def next_background_message(revision):
                 seen[chat] = fingerprint
                 continue
             if len(candidates) < 6:
-                candidates[chat] = (fingerprint, reply_id, customer)
+                candidates[chat] = (fingerprint, reply_id, customer, person if test_match else None)
         if candidates:
-            context_chats = [chat for chat, (_, reply_id, _) in candidates.items() if reply_id and reply["mode"] == "model"]
+            context_chats = [chat for chat, (_, reply_id, _, _) in candidates.items() if reply_id and reply["mode"] == "model"]
             verified = read_background_texts(profile, list(candidates), context_chats, reply["contextMessages"])
-            for chat, (fingerprint, reply_id, customer) in candidates.items():
+            for chat, (fingerprint, reply_id, customer, test_sender) in candidates.items():
                 row = verified.get(chat)
                 stamp = fingerprint[0]
                 if not isinstance(row, dict) or row.get("timestamp") != stamp:
@@ -1550,6 +1684,13 @@ def next_background_message(revision):
                 seen[chat] = fingerprint
                 text = row.get("text")
                 if not isinstance(text, str) or not 0 < len(text) <= 2800:
+                    continue
+                if test_sender and (not waiting_for_test_contact
+                        or not bind_test_contact(reply, profile, revision, test_sender)):
+                    reply_id = None
+                elif test_sender:
+                    waiting_for_test_contact = False
+                if not (reply_id or customer):
                     continue
                 text_hash = hashlib.sha256(text.encode()).hexdigest()
                 event = hashlib.sha256(f"background\n{chat}\n{stamp}\n{text_hash}".encode()).hexdigest()
@@ -2632,12 +2773,19 @@ class Handler(BaseHTTPRequestHandler):
                                                 page=int(page) if page else None))
         if method == "PUT" and path in {"/api/settings/reply", "/api/settings/group"}:
             return self.reply(save_settings(path.rsplit("/", 1)[-1], self.payload()))
+        if method == "POST" and path == "/api/model/list":
+            return self.reply(list_available_models(self.payload()))
+        if method == "POST" and path == "/api/model/test":
+            return self.reply(test_model_connection(self.payload()))
         if method == "PUT" and path == "/api/settings/model":
             return self.reply(save_model_configuration(self.payload()))
         if method == "PUT" and path == "/api/setup":
             return self.reply(complete_setup(self.payload()))
         if method == "PUT" and path == "/api/setup/model":
             return self.reply(save_setup_model(self.payload()))
+        if method == "POST" and path == "/api/setup/current-contact":
+            self.payload()
+            return self.reply(setup_current_contact())
         if method == "POST" and path == "/api/setup/style":
             return self.reply(analyze_setup_style(self.payload()))
         if method == "POST" and path == "/api/setup/wechat/open":
