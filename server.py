@@ -18,6 +18,7 @@ import urllib.parse
 import urllib.request
 import zipfile
 from contextlib import closing
+from contextvars import ContextVar, copy_context
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
@@ -32,6 +33,7 @@ APP_HOME = Path(os.environ.get("WECHAT_ASSISTANT_HOME", ROOT)).resolve()
 DATA = Path(os.environ.get("WECHAT_ASSISTANT_DATA", APP_HOME / "data"))
 BUNDLED_READER = APP_HOME / "runtime" / "wechat-reader.py"
 BUNDLED_READER_PYTHON = APP_HOME / "runtime" / "python" / "python.exe"
+BUNDLED_READER_SETUP = BUNDLED_READER_PYTHON.parent / "thirdparty" / "wechat_cli" / "keys" / "scanner_windows.py"
 DEFAULT_CLI = (BUNDLED_READER if BUNDLED_READER.is_file() and BUNDLED_READER_PYTHON.is_file()
                else Path.home() / "wxtools" / "venv" / "Scripts" / "wechat-cli.exe")
 CLI = Path(os.environ.get("WECHAT_CLI_PATH", DEFAULT_CLI))
@@ -66,11 +68,14 @@ MAX_TEXT = 800_000
 TEXT_TYPES = {".txt", ".md", ".csv"}
 MAX_DOCS = 40
 CLI_LOCK = threading.Lock()
-HISTORY_SOURCE_LOCK = threading.Lock()
-HISTORY_SOURCE_CACHE = (None, 0.0, {})
+READER_SETUP = {"state": "idle", "retryAt": 0.0}
 STATUS_LOCK = threading.Lock()
 STATUS_CACHE = (0.0, {})
-SDK_ACCOUNT = (None, "")
+STATUS_LAST_CONFIRMED = 0.0
+STATUS_PROBE_TIMEOUT = 22
+ACTIVE_ACCOUNT = None
+ACCOUNT_UNSET = object()
+REQUEST_ACCOUNT = ContextVar("request_account", default=ACCOUNT_UNSET)
 AUTOMATION_LOCK = threading.Lock()
 AUTOMATION_STATUS = {}
 AUTOMATION_HEARTBEAT_SECONDS = 30
@@ -106,15 +111,27 @@ class AppError(Exception):
         self.status = status
 
 
-def database():
-    connection = sqlite3.connect(DATA / "workspace.sqlite3", timeout=8)
+def request_account():
+    scope = REQUEST_ACCOUNT.get()
+    return ACTIVE_ACCOUNT if scope is ACCOUNT_UNSET else scope
+
+
+def account_data():
+    account = request_account()
+    return account["directory"] if account else DATA / "signed-out"
+
+
+def database(directory=None):
+    folder = directory or account_data()
+    connection = sqlite3.connect(folder / "workspace.sqlite3", timeout=8)
     connection.row_factory = sqlite3.Row
     return connection
 
 
-def init_database():
-    DATA.mkdir(parents=True, exist_ok=True)
-    with closing(database()) as connection, connection:
+def init_database(directory=None):
+    directory = directory or account_data()
+    directory.mkdir(parents=True, exist_ok=True)
+    with closing(database(directory)) as connection, connection:
         connection.execute("PRAGMA journal_mode=WAL")
         connection.executescript("""
             CREATE TABLE IF NOT EXISTS settings (
@@ -434,7 +451,7 @@ def label_names(items):
 
 
 def read_wechat_tags():
-    catalog = release_update.read_json(DATA / "wechat-tags.json")
+    catalog = release_update.read_json(account_data() / "wechat-tags.json")
     return {} if catalog.get("profile") and catalog["profile"] != history_profile() else catalog
 
 
@@ -521,6 +538,7 @@ def save_settings(section, value, *, completing_setup=False):
     if not isinstance(value, dict):
         raise AppError("配置格式有误。")
     credential = None
+    enable_setup_reply = False
     retained_reply_fields = {"tone", "historyProfile", "mimicTone", "contextMessages", "baseUrl", "model"}.difference(value) if section == "reply" else set()
     if section == "reply":
         previous = read_settings()["reply"]
@@ -553,6 +571,8 @@ def save_settings(section, value, *, completing_setup=False):
                 if targets != new_targets or not test_contact:
                     enabled = False
                 targets = new_targets
+                enable_setup_reply = bool(test_contact and not previous["enabledConfigured"])
+                enabled = enabled or enable_setup_reply
         elif enabled and scope == "contacts" and not targets and not test_contact and test_contact_name:
             test_contact = bound_test_contact(previous) or match_local_test_contact(history_profile(), test_contact_name)
             if test_contact:
@@ -619,6 +639,10 @@ def save_settings(section, value, *, completing_setup=False):
         if WORKBENCH_EXIT.is_set():
             raise AppError("工作台正在退出。", 409)
         settings = read_settings()
+        if enable_setup_reply and settings["reply"]["enabledConfigured"]:
+            value["enabled"] = settings["reply"]["enabled"]
+            value["enabledConfigured"] = True
+            enable_setup_reply = False
         for name in retained_reply_fields:
             value[name] = settings["reply"][name]
         settings[section] = value
@@ -631,7 +655,7 @@ def save_settings(section, value, *, completing_setup=False):
             else:
                 catalog = read_wechat_tags() if reply_settings["scope"] == "tags" else {}
                 error = background_configuration_error(reply_settings, reply_targets(reply_settings, catalog), catalog)
-            if error:
+            if error and not enable_setup_reply:
                 raise AppError(error)
         connection.execute("INSERT INTO settings VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET value=excluded.value",
                            (section, json.dumps(value, ensure_ascii=False)))
@@ -665,7 +689,7 @@ def forget_local_process(process):
 
 
 def load_automation_pause():
-    with closing(database()) as connection:
+    with closing(database(DATA)) as connection:
         saved = connection.execute("SELECT value FROM settings WHERE name='automation_paused'").fetchone()
     if saved and saved["value"] == "true":
         AUTOMATION_PAUSED.set()
@@ -676,7 +700,7 @@ def set_automation_pause(paused):
         raise AppError("暂停状态无效。")
     with PAUSE_LOCK:
         with LOCAL_CHILD_LOCK:
-            with closing(database()) as connection, connection:
+            with closing(database(DATA)) as connection, connection:
                 connection.execute(
                     "INSERT INTO settings VALUES ('automation_paused', ?) "
                     "ON CONFLICT(name) DO UPDATE SET value=excluded.value", (json.dumps(paused),))
@@ -739,12 +763,13 @@ def run_local(command, timeout, input_text=None, *, desktop_control=False):
 
 
 def wechat_cli(*arguments, timeout=18):
-    if not CLI.is_file() or not CLI_CONFIG.is_file():
+    config = active_reader_config()
+    if not CLI.is_file():
         raise AppError("本机历史消息查询工具或账号配置不可用。", 503)
     command = [str(CLI_PYTHON), str(CLI)] if CLI.suffix.lower() == ".py" else [str(CLI)]
     try:
         with CLI_LOCK:
-            result = run_local([*command, "--config", str(CLI_CONFIG), *map(str, arguments)], timeout)
+            result = run_local([*command, "--config", str(config), *map(str, arguments)], timeout)
         if result.returncode == 0:
             return json.loads(result.stdout)
     except (OSError, ValueError, subprocess.TimeoutExpired):
@@ -777,14 +802,18 @@ def run_sdk_directory(arguments, timeout):
     raise AppError("暂时无法读取微信通讯录。请保持一个已登录的电脑版微信打开，并重试。", 503)
 
 
-def read_local_directory(profile, mode, failure, *, timeout=30, **filters):
-    command = [str(CLI_PYTHON), str(ROOT / "style_history.py"), str(CLI_CONFIG)]
+def read_local_directory(profile, mode, failure, *, timeout=30, config=None, **filters):
+    command = [str(CLI_PYTHON), str(ROOT / "style_history.py"), str(config or active_reader_config())]
     selection = json.dumps({"mode": mode, "owner": profile, **filters})
     try:
         with CLI_LOCK:
             result = run_local(command, timeout, selection)
         payload = json.loads(result.stdout) if result.returncode == 0 else None
-    except (OSError, ValueError, subprocess.TimeoutExpired):
+    except subprocess.TimeoutExpired:
+        if mode == "initialize":
+            raise AppError("首次读取本机微信资料超时。请等待微信同步完成，再点击重新识别。", 503)
+        payload = None
+    except (OSError, ValueError):
         payload = None
     if not isinstance(payload, dict) or payload.get("error"):
         raise AppError(payload["error"] if isinstance(payload, dict) and payload.get("error")
@@ -813,69 +842,185 @@ def sync_wechat_tags():
         raise AppError("读取时微信资料账号已更换，请重新读取标签。", 409)
     catalog = {"owner": owner, "profile": profile, "labels": labels, "people": list(people.values()),
                "includesUntagged": includes_untagged, "syncedAt": datetime.now(timezone.utc).isoformat()}
-    release_update.write_json(DATA / "wechat-tags.json", catalog)
+    release_update.write_json(account_data() / "wechat-tags.json", catalog)
     return public_wechat_tags(catalog)
 
 
-def history_source():
-    global HISTORY_SOURCE_CACHE
-    if not CLI_PYTHON.is_file():
+def reader_files_current(account):
+    try:
+        source = account["source"]
+        return (account["config"].stat().st_mtime_ns == account["configStamp"]
+                and Path(source["dbDir"]).is_dir() and Path(source["keysFile"]).is_file())
+    except OSError:
+        return False
+
+
+def active_reader_config():
+    account = request_account()
+    if account is None or account is not ACTIVE_ACCOUNT or not reader_files_current(account):
+        raise AppError("正在核对当前微信账号，请稍后重试。", 409)
+    return account["config"]
+
+
+def read_config_source(config):
+    if not CLI_PYTHON.is_file() or not config.is_file():
         return {}
     try:
-        stat = CLI_CONFIG.stat()
-    except OSError:
+        return read_local_directory(None, "source", "无法核对本机微信资料。", timeout=16, config=config)
+    except AppError:
         return {}
-    key = (CLI_CONFIG, stat.st_ino, stat.st_mtime_ns, stat.st_size)
-    with HISTORY_SOURCE_LOCK:
-        cached, expires, source = HISTORY_SOURCE_CACHE
-        if key == cached and time.monotonic() < expires:
-            return source
-        try:
-            source = read_local_directory(None, "source", "无法核对本机微信资料。", timeout=8)
-        except AppError:
-            source = {}
-        HISTORY_SOURCE_CACHE = (key, time.monotonic() + (60 if source else 8), source)
-        return source
+
+
+def history_source():
+    account = request_account()
+    return account["source"] if account is not None and account is ACTIVE_ACCOUNT and reader_files_current(account) else {}
 
 
 def history_profile():
     return history_source().get("profile", "")
 
 
+def change_active_account(account):
+    global ACTIVE_ACCOUNT, GROUP_WORKER_TOKEN, BACKGROUND_INBOX
+    if ACTIVE_ACCOUNT is account:
+        return
+    ACTIVE_ACCOUNT = account
+    GROUP_WORKER_TOKEN = secrets.token_urlsafe(32)
+    with BACKGROUND_LOCK:
+        BACKGROUND_INBOX = {"revision": None, "started": 0, "seen": {}, "pending": {}}
+    with AUTOMATION_LOCK:
+        AUTOMATION_STATUS.clear()
+    if SDK_CHILD is not None and SDK_CHILD.poll() is None:
+        SDK_CHILD.terminate()
+
+
+def saved_workspace(profile, config):
+    account_key = hashlib.sha256(profile.casefold().encode()).hexdigest()
+    directory = DATA / "accounts" / account_key
+    directory.mkdir(parents=True, exist_ok=True)
+    legacy_database = DATA / "workspace.sqlite3"
+    owner_record = DATA / "legacy-account.json"
+    known_owner = release_update.read_json(owner_record).get("profile")
+    tagged_owner = release_update.read_json(DATA / "wechat-tags.json").get("profile")
+    if not known_owner and legacy_database.is_file() and (config == CLI_CONFIG or tagged_owner == profile):
+        release_update.write_json(owner_record, {"profile": profile})
+        known_owner = profile
+    target = directory / "workspace.sqlite3"
+    if known_owner == profile and legacy_database.is_file() and not target.exists():
+        temporary = target.with_suffix(".migrating")
+        try:
+            with closing(sqlite3.connect(legacy_database)) as source, closing(sqlite3.connect(temporary)) as destination:
+                source.backup(destination)
+            legacy_tags = release_update.read_json(DATA / "wechat-tags.json")
+            if legacy_tags.get("profile") == profile:
+                release_update.write_json(directory / "wechat-tags.json", legacy_tags)
+            temporary.replace(target)
+        finally:
+            temporary.unlink(missing_ok=True)
+    init_database(directory)
+    return account_key, directory
+
+
+def setup_local_reader(process_id, generation):
+    readers = DATA / "readers"
+    probe = readers / (".probe-" + generation + ".json")
+    probe_keys = None
+    try:
+        read_local_directory(None, "initialize", "无法准备当前微信账号的本机资料，请重新识别。",
+                             timeout=120, config=probe, processId=process_id, alias="")
+        options = release_update.read_json(probe)
+        if options.get("keys_file"):
+            path = Path(options["keys_file"])
+            if path.parent == readers and path.name.startswith("wechat-reader-"):
+                probe_keys = path
+        source = read_config_source(probe)
+        if not source.get("historyAvailable"):
+            raise AppError("未能校验当前登录账号的本机资料，请重新识别。")
+        final = sdk_response((), STATUS_PROBE_TIMEOUT)
+        if final.get("windows") != 1 or final.get("processId") != process_id:
+            raise AppError("微信登录状态已变化，请重新识别。")
+        with STATUS_LOCK:
+            if READER_SETUP.get("generation") != generation:
+                return
+            key = hashlib.sha256(source["profile"].casefold().encode()).hexdigest()
+            saved = readers / (key + ".json")
+            existing = read_config_source(saved)
+            legacy = read_config_source(CLI_CONFIG)
+            matching_legacy = (legacy.get("profile") == source["profile"]
+                               and legacy.get("dbDir") == source["dbDir"])
+            if (existing.get("historyAvailable") and existing.get("profile") == source["profile"]
+                    and existing.get("dbDir") == source["dbDir"]
+                    and release_update.read_json(Path(existing["keysFile"])) ==
+                    release_update.read_json(Path(source["keysFile"]))):
+                source = existing
+            else:
+                probe.replace(saved)
+                probe_keys = None
+            key, directory = saved_workspace(source["profile"], CLI_CONFIG if matching_legacy else saved)
+            change_active_account({"key": key, "directory": directory, "source": source, "config": saved,
+                                   "configStamp": saved.stat().st_mtime_ns})
+            READER_SETUP.update(state="ready", message="")
+    except (AppError, OSError, ValueError, sqlite3.Error, subprocess.TimeoutExpired) as error:
+        with STATUS_LOCK:
+            if READER_SETUP.get("generation") == generation:
+                message = str(error) if isinstance(error, AppError) else "无法核对当前账号，请重新识别微信。"
+                READER_SETUP.update(state="error", message=message, retryAt=time.monotonic() + 30)
+    finally:
+        probe.unlink(missing_ok=True)
+        if probe_keys:
+            probe_keys.unlink(missing_ok=True)
+
+
 def read_account(force=False):
-    global STATUS_CACHE, SDK_ACCOUNT
+    global STATUS_CACHE, STATUS_LAST_CONFIRMED
     with STATUS_LOCK:
         now = time.monotonic()
+        previous = STATUS_CACHE[1]
         if not force and now - STATUS_CACHE[0] < 8:
-            return STATUS_CACHE[1]
-        source = "unknown"
-        names = []
-        window_count, process_id = 0, None
-        if SDK.is_file() and DOTNET.is_file():
-            try:
-                detected = sdk_response((), 9)
-                window_count, process_id = detected.get("windows", 0), detected.get("processId")
-            except (OSError, ValueError, subprocess.TimeoutExpired):
-                pass
-        local_source = history_source()
-        profile = local_source.get("profile", "")
-        if window_count == 1 and profile:
-            names = [local_source["name"]]
-            source = "client"
-        if window_count != 1 or SDK_ACCOUNT[0] != process_id:
-            SDK_ACCOUNT = (None, "")
-        elif SDK_ACCOUNT[1]:
-            names, source = [SDK_ACCOUNT[1]], "sdk"
-        result = {"source": source, "accounts": names, "profile": profile, "windows": window_count,
-                  "processId": process_id,
-                  "historyAvailable": CLI.is_file() and bool(local_source.get("historyAvailable"))}
-        STATUS_CACHE = (time.monotonic(), result)
-        return result
+            window_count, process_id = previous["windows"], previous["processId"]
+            checking = previous["connectionChecking"]
+        else:
+            window_count, process_id, checking = 0, None, False
+            if SDK.is_file() and DOTNET.is_file():
+                try:
+                    detected = sdk_response((), STATUS_PROBE_TIMEOUT)
+                    window_count, process_id = detected.get("windows", 0), detected.get("processId")
+                    STATUS_LAST_CONFIRMED = time.monotonic()
+                except (OSError, ValueError, subprocess.TimeoutExpired):
+                    checking = True
+                    if time.monotonic() - STATUS_LAST_CONFIRMED < 45:
+                        window_count, process_id = previous.get("windows", 0), previous.get("processId")
+            STATUS_CACHE = (time.monotonic(), {"windows": window_count, "processId": process_id,
+                                               "connectionChecking": checking})
+        if not checking:
+            bound = process_id if window_count == 1 else None
+            active = ACTIVE_ACCOUNT
+            broken = active is not None and not reader_files_current(active)
+            if bound != READER_SETUP.get("pid") or broken or (force and active is not None):
+                change_active_account(None)
+                READER_SETUP.clear()
+                READER_SETUP.update(state="idle", retryAt=0, pid=bound, generation=secrets.token_hex(12))
+            if (bound and READER_SETUP["state"] in ("idle", "error")
+                    and (force or now >= READER_SETUP["retryAt"])
+                    and not AUTOMATION_PAUSED.is_set() and not WORKBENCH_EXIT.is_set()):
+                READER_SETUP["state"] = "preparing"
+                threading.Thread(target=setup_local_reader, args=(bound, READER_SETUP["generation"]), daemon=True).start()
+        state = ACTIVE_ACCOUNT
+        local = state["source"] if state else {}
+        return {"source": "client" if state else "unknown", "accounts": [local["name"]] if state else [],
+                "profile": local.get("profile", ""), "accountKey": state["key"] if state else "",
+                "windows": window_count, "processId": process_id, "connectionChecking": checking,
+                "historyAvailable": bool(state), "readerSetup": {"state": READER_SETUP["state"],
+                    "message": READER_SETUP.get("message", "")}}
 
 
 def account_status(force=False):
-    with_key = has_model_key(read_settings()["reply"]["baseUrl"])
-    return read_account(force=force) | {"modelKeyPresent": with_key}
+    status = read_account(force=force)
+    token = REQUEST_ACCOUNT.set(ACTIVE_ACCOUNT)
+    try:
+        return status | {"modelKeyPresent": has_model_key(read_settings()["reply"]["baseUrl"])}
+    finally:
+        REQUEST_ACCOUNT.reset(token)
 
 
 def open_wechat_for_setup():
@@ -888,22 +1033,7 @@ def open_wechat_for_setup():
 
 
 def identify_setup_account():
-    global STATUS_CACHE, SDK_ACCOUNT
-    status = account_status(force=True)
-    if status["windows"] != 1 or status["accounts"]:
-        return status
-    person = run_sdk_directory(("--account",), 26)
-    name = text_field(person.get("name", ""), 160, "当前微信昵称", True)
-    process_id = status["processId"]
-    if process_id is not None and person.get("processId") != process_id:
-        raise AppError("识别期间微信窗口已变化，请重新识别。", 409)
-    with STATUS_LOCK:
-        current = STATUS_CACHE[1]
-        if current["windows"] != 1 or current["processId"] != process_id:
-            raise AppError("识别期间微信窗口已变化，请重新识别。", 409)
-        SDK_ACCOUNT = (process_id, name)
-        STATUS_CACHE = (time.monotonic(), current | {"accounts": [name], "source": "sdk"})
-    return status | {"accounts": [name], "source": "sdk"}
+    return account_status(force=True)
 
 
 def contact_results(query, *, setup=False):
@@ -946,7 +1076,9 @@ def match_local_test_contact(profile, name):
 def complete_setup(value):
     if not isinstance(value, dict):
         raise AppError("配置格式有误。")
-    status = read_account(force=True)
+    status = read_account()
+    if status["connectionChecking"]:
+        raise AppError("正在确认微信连接，请稍后再完成配置。", 409)
     if status["windows"] != 1 or not status["accounts"]:
         raise AppError("请先在首页识别当前登录的微信。", 409)
     contact = value.get("testContact")
@@ -1413,6 +1545,7 @@ def group_preview(value):
 
 
 def automation_revision(settings, catalog=None):
+    settings = settings | {"workspace": history_profile()}
     if settings["reply"]["scope"] == "tags":
         catalog = read_wechat_tags() if catalog is None else catalog
         settings = settings | {"tagSync": catalog.get("syncedAt"), "tagOwner": catalog.get("owner")}
@@ -1514,7 +1647,7 @@ def background_contact_index(contacts):
 
 
 def read_background_texts(owner, chats, context_chats=(), context_limit=DEFAULTS["reply"]["contextMessages"]):
-    command = [str(CLI_PYTHON), str(ROOT / "style_history.py"), str(CLI_CONFIG)]
+    command = [str(CLI_PYTHON), str(ROOT / "style_history.py"), str(active_reader_config())]
     selection = {"mode": "background", "owner": owner, "chats": chats,
                  "contextChats": context_chats, "contextLimit": context_limit}
     try:
@@ -1786,8 +1919,9 @@ def finish_group_plan(value):
         names = [text_field(member, 160, "群成员", True) for member in members]
         if len(set(names)) != 3:
             raise AppError("群成员需要是三位可区分的联系人。")
+        reported_name = value.get("actualGroupName") or row["group_name"]
         save_operation_record({
-            "kind": "group", "status": "success", "receiptId": receipt, "groupName": row["group_name"],
+            "kind": "group", "status": "success", "receiptId": receipt, "groupName": reported_name,
             "members": names, "completedAt": value.get("completedAt"),
         })
     with closing(database()) as connection, connection:
@@ -2013,6 +2147,7 @@ def monitor_group_worker(stop, port):
         if not prepare_managed_bridge(stop):
             return
         while not stop.wait(3):
+            read_account()
             if child is not None and child.poll() is None:
                 continue
             if child is not None:
@@ -2066,7 +2201,9 @@ def monitor_group_worker(stop, port):
 
 
 def history_learning_settings():
-    owner = history_profile()
+    source = history_source()
+    owner = source.get("profile", "")
+    available = bool(source.get("historyAvailable"))
     with HISTORY_LEARNING_LOCK:
         active = dict(HISTORY_LEARNING) if HISTORY_LEARNING.get("owner") == owner else {}
         config = read_settings()["reply"]
@@ -2084,7 +2221,8 @@ def history_learning_settings():
         "baseTone": config["tone"],
         "mimicTone": config["mimicTone"],
         "ready": bool(config["mode"] == "model" and config["model"] and config["baseUrl"]),
-        "historyAvailable": bool(history_source().get("historyAvailable")),
+        "historyAvailable": available,
+        "readerSetup": {"state": READER_SETUP["state"], "message": READER_SETUP.get("message", "")},
         "canRestore": bool(backup),
         "job": job,
     }
@@ -2223,7 +2361,7 @@ def edit_history_card(card_id, value):
 
 
 def read_learning_page(owner, as_of, cursor):
-    command = [str(CLI_PYTHON), str(ROOT / "style_history.py"), str(CLI_CONFIG)]
+    command = [str(CLI_PYTHON), str(ROOT / "style_history.py"), str(active_reader_config())]
     data = {"mode": "learning", "owner": owner, "asOf": as_of, "cursor": cursor}
     try:
         with CLI_LOCK:
@@ -2433,7 +2571,8 @@ def start_history_learning():
             connection.execute("DELETE FROM history_card_drafts WHERE owner=?", (owner,))
         HISTORY_LEARNING.clear()
         HISTORY_LEARNING.update(owner=owner, state="running", read=0, replies=0, cards=0, unreadable=0)
-        threading.Thread(target=run_history_learning, args=(owner, config, int(time.time())), daemon=True).start()
+        threading.Thread(target=copy_context().run, args=(run_history_learning, owner, config, int(time.time())),
+                         daemon=True).start()
         return {"state": "running"}
 
 
@@ -2441,7 +2580,7 @@ def read_style_samples(chats, days):
     source = history_source()
     if not source.get("historyAvailable"):
         raise AppError("本机历史查询工具或当前微信的账号资料不可用。", 503)
-    command = [str(CLI_PYTHON), str(ROOT / "style_history.py"), str(CLI_CONFIG)]
+    command = [str(CLI_PYTHON), str(ROOT / "style_history.py"), str(active_reader_config())]
     try:
         with CLI_LOCK:
             result = run_local(command, 120, json.dumps({"owner": source["profile"], "chats": chats, "days": days}))
@@ -2860,7 +2999,22 @@ class Handler(BaseHTTPRequestHandler):
                 urllib.parse.urlsplit(self.path).path.startswith("/api/")):
             return self.reply({"error": "请在工作台页面中操作。"}, 403)
         parsed = urllib.parse.urlsplit(self.path)
+        account = ACTIVE_ACCOUNT
+        scope = REQUEST_ACCOUNT.set(account)
         try:
+            account_write = self.command != "GET" and parsed.path not in {
+                "/api/shutdown", "/api/automation-pause", "/api/setup/wechat/open", "/api/setup/wechat/check",
+                "/api/update/install", "/api/model/list", "/api/model/test",
+            }
+            browser_key = self.headers.get("X-WeChat-Account")
+            if (browser_key and browser_key != (account["key"] if account else "") and parsed.path not in {
+                    "/api/status", "/api/setup/wechat/check", "/api/automation-pause", "/api/shutdown"}):
+                raise AppError("微信账号已切换，请刷新后重试。", 409)
+            if parsed.path.startswith("/api/") and account_write:
+                if account is None or account is not ACTIVE_ACCOUNT:
+                    raise AppError("正在核对微信账号，请稍后重试。", 409)
+                if not parsed.path.startswith("/api/group-worker/") and self.headers.get("X-WeChat-Account") != account["key"]:
+                    raise AppError("微信账号已切换，请刷新后重试。", 409)
             self.route(self.command, parsed.path, urllib.parse.parse_qs(parsed.query))
         except AppError as error:
             self.reply({"error": str(error)}, error.status)
@@ -2869,12 +3023,15 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as error:
             print(f"{self.command} {parsed.path}: {type(error).__name__}", file=sys.stderr)
             self.reply({"error": "本机服务出现异常，请重试。"}, 500)
+        finally:
+            REQUEST_ACCOUNT.reset(scope)
 
     do_GET = do_POST = do_PUT = do_DELETE = dispatch
 
 
 if __name__ == "__main__":
-    init_database()
+    init_database(DATA)
+    init_database(DATA / "signed-out")
     load_automation_pause()
     port = int(os.environ.get("WECHAT_ASSISTANT_PORT", "8766"))
     with WorkbenchServer(("127.0.0.1", port), Handler) as server:

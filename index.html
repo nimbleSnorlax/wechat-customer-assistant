@@ -852,7 +852,10 @@ function action(label, className, callback) {
   return button;
 }
 async function request(path, options) {
-  const response = await fetch(path, options);
+  const headers = new Headers(options?.headers);
+  const accountKey = sessionStorage.getItem("wechat-workbench-account");
+  if (accountKey) headers.set("X-WeChat-Account",accountKey);
+  const response = await fetch(path, {...options, headers});
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || "请求失败，请重试。");
   return payload;
@@ -1205,7 +1208,10 @@ for (const kind of ["reply","group"]) {
 }
 
 
+let accountStatusLoading = false;
 async function loadStatus() {
+  if (accountStatusLoading) return;
+  accountStatusLoading = true;
   try {
     applyAccountStatus(await request("/api/status"));
   } catch (error) {
@@ -1222,28 +1228,46 @@ async function loadStatus() {
     note("account-info",error.message,true);
     $("setup-account").dataset.ready = "false";
     note("setup-account","暂时无法检查微信状态。",true);
+  } finally {
+    accountStatusLoading = false;
   }
 }
 function applyAccountStatus(data) {
+    const key = data.accountKey || "";
+    const previousKey = sessionStorage.getItem("wechat-workbench-account");
+    if (key !== (previousKey || "")) {
+      sessionStorage.setItem("wechat-workbench-account",key);
+      location.reload();
+      return;
+    }
     setupAccount = data;
     const found = data.windows > 0;
     const nickname = found && data.accounts.length === 1 ? data.accounts[0] : "";
-    const userLabel = found ? (privacy ? "微信账号" : nickname || "微信账号") : "微信未连接";
+    const checking = data.connectionChecking;
+    const reader = data.readerSetup || {};
+    const connectionMessage = "正在核对微信连接，请稍等。";
+    const readerMessage = reader.state === "preparing" ? "正在准备本机微信历史和后台接收。"
+      : reader.state === "error" ? reader.message : "";
+    const userLabel = found ? (privacy ? "微信账号" : nickname || "微信账号")
+      : checking ? "正在识别微信" : "微信未连接";
     $("account").dataset.ready = String(found);
     note("account-name",userLabel);
     $("account-toggle").title = userLabel;
     note("account-avatar",nickname && !privacy ? nickname.match(/[\p{L}\p{N}]/u)?.[0] || "微" : "微");
-    note("account-title",found ? "微信已登录" : data.profile ? "本机资料可用" : "未识别到登录");
-    note("account-info",found
+    note("account-title",checking ? "正在核对微信连接"
+      : found ? "微信已登录" : data.profile ? "本机资料可用" : "未识别到登录");
+    note("account-info",checking ? connectionMessage : found
       ? (privacy ? "账号已隐藏" : nickname ? "当前微信昵称 · " + nickname : "已检测到 " + data.windows + " 个微信窗口")
       : data.profile ? (privacy ? "本机资料账号已隐藏" : "本机资料账号 · " + data.profile) : "请在电脑版微信登录");
     modelHasKey = data.modelKeyPresent;
     localAccountId = data.profile || "";
     describeModel();
-    const ready = data.windows === 1 && Boolean(nickname);
+    const ready = !checking && data.windows === 1 && Boolean(nickname);
     $("setup-account").dataset.ready = String(ready);
-    note("setup-account",ready ? "已识别 " + (privacy ? "当前微信" : nickname)
+    note("setup-account",checking ? connectionMessage
+      : ready ? "已识别 " + (privacy ? "当前微信" : nickname)
       : data.windows > 1 ? "请只保留一个已登录的电脑版微信。"
+      : found && readerMessage ? readerMessage
       : found ? "微信已登录，请点「识别微信」获取昵称。"
       : "请打开电脑版微信并完成登录。");
     renderSetupKeyHint();
@@ -1501,7 +1525,9 @@ function loadSetupFields(reply) {
   renderSetupMode();
   if (reply.setupComplete) {
     note("setup-complete-info", setupContact
-      ? "测试联系人为 " + setupContact.name + "。可在回复设置中开启或调整自动回复。"
+      ? "测试联系人为 " + setupContact.name + (reply.enabled
+        ? "。自动回复已开启，后台接收就绪后生效。"
+        : "。可在回复设置中开启或调整自动回复。")
       : "已保存测试昵称 " + reply.testContactName + "。开启自动回复后，会用匹配到的新私聊确认联系人。");
     showSetupStep(3,false);
   }
@@ -1593,8 +1619,9 @@ $("setup-form").addEventListener("submit",event => {
     return false;
   };
   if (setupStep === 0) {
-    if (setupAccount?.windows !== 1 || setupAccount.accounts?.length !== 1) {
-      setupNotify("请先登录并识别当前微信。",true);
+    if (setupAccount?.connectionChecking || setupAccount?.windows !== 1 || setupAccount.accounts?.length !== 1) {
+      setupNotify(setupAccount?.connectionChecking || setupAccount?.readerSetup?.state === "preparing"
+        ? "正在识别微信，请稍等。" : "请先登录并识别当前微信。",true);
       $("setup-detect-wechat").focus();
       return;
     }
@@ -2245,7 +2272,10 @@ async function refreshHistoryLearning() {
     const counts = `已读取 ${job.read || 0} 条文字，已分析 ${job.replies || 0} 条本人消息，整理出 ${job.cards || 0} 张卡片。`;
     const messages = {
       idle: !data.ready ? "请先在「AI 配置」中保存模型，再在「回复设置」中选择 AI 生成。"
-        : !data.historyAvailable ? "请先配置本机微信历史读取。" : "",
+        : !data.historyAvailable ? (
+          data.readerSetup?.state === "preparing" ? "正在准备本机微信历史。" :
+          data.readerSetup?.message || "请在首页登录并识别微信，准备本机历史读取。"
+        ) : "",
       running: "",
       done: "整理完成。" + counts + (job.toneSaved ? "语气和卡片已切换到新版本。" : ""),
       partial: `已整理可读部分，有 ${job.unreadable} 处历史无法读取。` + counts,
@@ -2582,6 +2612,10 @@ setInterval(() => {
   }
 },15000);
 setInterval(loadStatus,45000);
+setInterval(() => {
+  if (!document.hidden && (setupAccount?.connectionChecking
+      || setupAccount?.readerSetup?.state === "preparing")) loadStatus();
+},4000);
 loadInstalledVersion();
 checkUpdate();
 setInterval(checkUpdate,automaticUpdateInterval);

@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import base64
 import json
+import os
 import sqlite3
 import sys
 import re
 import unicodedata
 from collections import Counter
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, redirect_stdout
 from datetime import datetime, timedelta
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from uuid import uuid4
 
 from wechat_cli.core.context import AppContext
 from wechat_cli.core.messages import (
@@ -28,6 +32,7 @@ MIN_REPLY_CONTEXT = 5
 REPLY_CONTEXT_LIMIT = 50
 DEFAULT_REPLY_CONTEXT = 20
 WECHAT_ALIAS = re.compile(r"[A-Za-z0-9_-]{1,60}")
+READER_WINDOWS_MODULES = ""
 CONTACT_LABEL_FIELD = 30
 SYSTEM_CONTACTS = {"filehelper", "weixin", "fmessage", "medianote", "newsapp", "brandsessionholder",
                    "notifymessage", "weixinreminder", "appbrandcustomerservicemsg"}
@@ -84,6 +89,98 @@ class ContactDirectoryError(ValueError):
     pass
 
 
+def local_wechat_directories():
+    import winreg
+
+    roots = {Path.home(), Path.home() / "Documents"}
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as key:
+            documents = winreg.QueryValueEx(key, "Personal")[0]
+        documents = Path(os.path.expandvars(documents))
+        if documents.is_absolute():
+            roots.add(documents)
+    except OSError:
+        pass
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        configs = Path(appdata) / "Tencent" / "xwechat" / "config"
+        for ini in configs.glob("*.ini"):
+            try:
+                with ini.open("rb") as config_file:
+                    raw = config_file.read(4097)
+                if len(raw) > 4096:
+                    continue
+                try:
+                    encoding = "utf-16" if raw.startswith((b"\xff\xfe", b"\xfe\xff")) else "utf-8-sig"
+                    value = raw.decode(encoding).strip()
+                except UnicodeDecodeError:
+                    value = raw.decode("gbk").strip()
+                if value and not any(character in value for character in "\r\n\x00"):
+                    folder = Path(os.path.expandvars(value))
+                    if folder.is_absolute():
+                        roots.add(folder)
+            except (OSError, UnicodeError):
+                pass
+    directories = set()
+    for root in roots:
+        account_root = root if root.name.casefold() == "xwechat_files" else root / "xwechat_files"
+        for candidate in account_root.glob("*/db_storage"):
+            if (candidate / "contact" / "contact.db").is_file():
+                directories.add(candidate.resolve())
+    return sorted(directories), any((root / "WeChat Files").is_dir() for root in roots)
+
+
+def initialize_reader(config_path, process_id, alias=""):
+    if os.name != "nt" or type(process_id) is not int or process_id <= 0:
+        raise ContactDirectoryError("请先登录一个受支持的电脑版微信。")
+    from wechat_cli.keys import extract_keys
+
+    config_path = Path(config_path)
+    candidates, has_legacy_storage = local_wechat_directories()
+    if not candidates:
+        if has_legacy_storage:
+            raise ContactDirectoryError("只找到旧版微信历史目录。请打开电脑版微信 4.x，导入旧记录后再识别。")
+        raise ContactDirectoryError("微信聊天资料还在加载。加载完成后，请重新识别微信。")
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(dir=config_path.parent) as scratch:
+        matched = None
+        for index, directory in enumerate(candidates):
+            candidate_dir = Path(scratch) / str(index)
+            candidate_dir.mkdir()
+            keys = candidate_dir / "all_keys.json"
+            candidate = candidate_dir / "config.json"
+            try:
+                with open(os.devnull, "w", encoding="utf-8") as discard, redirect_stdout(discard):
+                    extract_keys(str(directory), str(keys), pid=process_id)
+                    candidate.write_text(json.dumps({"db_dir": str(directory)}), encoding="utf-8")
+                    app = AppContext(str(candidate))
+                    try:
+                        source = read_source_identity(app)
+                    finally:
+                        app.cache.cleanup()
+            except (RuntimeError, OSError, ValueError, TypeError, sqlite3.Error):
+                continue
+            if not source["historyAvailable"] or alias and alias.casefold() not in {
+                    source["alias"].casefold(), source["profile"].casefold()}:
+                continue
+            if matched is not None:
+                raise ContactDirectoryError("当前进程匹配到多个账号资料。请重新登录需要使用的微信账号。")
+            matched = source, keys, candidate
+        if matched:
+            source, keys, candidate = matched
+            saved_keys = config_path.with_name(f"wechat-reader-{uuid4().hex}.keys.json")
+            candidate.write_text(json.dumps({"db_dir": source["dbDir"], "keys_file": str(saved_keys)}),
+                                 encoding="utf-8")
+            keys.rename(saved_keys)
+            try:
+                candidate.replace(config_path)
+            except OSError:
+                saved_keys.unlink(missing_ok=True)
+                raise
+            return {"state": "ready", "profile": source["profile"]}
+    raise ContactDirectoryError("暂时无法读取当前账号的资料。请保持微信登录并重新识别。")
+
+
 @contextmanager
 def contact_snapshot(app):
     path = app.cache.get("contact/contact.db")
@@ -109,7 +206,8 @@ def source_identity(app, connection):
         raise ContactDirectoryError("无法核对本机资料所属的微信账号。")
     profile, alias, name = rows[0]
     return {"profile": profile, "alias": alias or profile, "name": name or profile,
-            "historyAvailable": bool(app.msg_db_keys)}
+            "historyAvailable": bool(app.msg_db_keys), "dbDir": str(directory.resolve()),
+            "keysFile": app.keys_file}
 
 
 def read_source_identity(app, expected_owner=None):
@@ -426,6 +524,17 @@ def history_page(config_path, selection):
 if __name__ == "__main__":
     try:
         selection = json.loads(sys.stdin.read().lstrip("\ufeff"))
+        if selection.get("mode") == "initialize":
+            if READER_WINDOWS_MODULES:
+                import wechat_cli
+                with TemporaryDirectory() as runtime:
+                    bundle = Path(runtime) / "reader.zip"
+                    bundle.write_bytes(base64.b64decode(READER_WINDOWS_MODULES))
+                    wechat_cli.__path__.insert(0, str(bundle) + "/wechat_cli")
+                    print(json.dumps(initialize_reader(sys.argv[1], selection["processId"], selection["alias"])))
+            else:
+                print(json.dumps(initialize_reader(sys.argv[1], selection["processId"], selection["alias"])))
+            sys.exit(0)
         config = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
         if not isinstance(config, dict) or not isinstance(config.get("db_dir"), str) or not config["db_dir"].strip():
             raise ContactDirectoryError("请先配置当前微信账号的本机只读资料。")

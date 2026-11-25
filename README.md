@@ -40,7 +40,13 @@ python -m pip install --target .python pypdf==6.21.4
 pwsh -File Build-Setup.ps1 -Repository nimbleSnorlax/wechat-customer-assistant -ReaderSource .thirdparty/wechat-cli-plus
 ```
 
-工作台代码位于 `server.py`、`index.html`、`installer` 和 `sdk-bridge`。微信界面操作使用 SDK。Windows 微信 4.x 的后台接收、历史整理和回复上下文使用对应账号的 `db_storage` 本机只读资料，适用于通过 `Weixin.exe` 或 `WeChat.exe` 登录的客户端。历史查询工具路径可通过 `WECHAT_CLI_PATH` 和 `WECHAT_CLI_CONFIG` 指定。SDK 补丁的许可见 [上游 MIT 许可](patches/WeChatAuto.SDK.LICENSE.txt)。
+工作台代码位于 `server.py`、`index.html`、`installer` 和 `sdk-bridge`。SDK 补丁的许可见 [上游 MIT 许可](patches/WeChatAuto.SDK.LICENSE.txt)。
+
+### Windows 微信客户端兼容性
+
+- 工作台同时查找 `Weixin.exe` 和 `WeChat.exe`，再通过登录后的主窗口识别客户端。排查时记录微信「关于」中的版本号、界面语言和任务管理器中的实际进程名。
+- 后台接收、通讯录、标签和历史整理读取当前账号的 4.x `xwechat_files\<账号>\db_storage`。读取器会查询微信的存储位置、Windows 的文档目录和用户目录。`WECHAT_CLI_PATH` 和 `WECHAT_CLI_CONFIG` 可用于指定已有查询配置。3.x 的 `WeChat Files` 是另一种格式，需要通过微信迁移后读取。
+- 英文界面的 4.2.0.53 已在虚拟机用已有读取配置验证联系人、标签和本地文字记录。创建三人群后，工作台会核对成员。当前界面未提供可识别的群名编辑框时，保留微信默认群名，运行记录使用实际群名。首次读取和实际消息发送需要在目标账号上验收。
 
 ## 通过 GitHub 更新工作台
 

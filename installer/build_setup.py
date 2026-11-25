@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 HERE = Path(__file__).resolve().parent
 APP_ICON = HERE / "WeChatAssistant.ico"
 sys.path.insert(0, str(ROOT))
-from release_update import BRIDGE_MARKER, BRIDGE_VERSION, FILES, REPOSITORY_PATTERN, installed_version, version
+from release_update import BRIDGE_MARKER, BRIDGE_VERSION, FILES, REPOSITORY_PATTERN, installed_version, packaged_reader, version
 
 PYTHON_PACKAGE = "python-3.13.17-embed-amd64.zip"
 PYTHON_URL = "https://www.python.org/ftp/python/3.13.17/" + PYTHON_PACKAGE
@@ -28,6 +28,7 @@ READER_MODULES = (
     "__init__.py", "commands/__init__.py", "commands/contacts.py", "commands/sessions.py",
     "core/__init__.py", "core/config.py", "core/contacts.py", "core/context.py",
     "core/crypto.py", "core/db_cache.py", "core/key_utils.py", "core/messages.py",
+    "keys/__init__.py", "keys/common.py", "keys/scanner_windows.py",
     "output/__init__.py", "output/formatter.py",
 )
 READER_PACKAGES = ("click==8.5.0", "colorama==0.4.6", "pycryptodome==3.24.1", "zstandard==0.25.0")
@@ -129,6 +130,8 @@ def build(repository, output, release_version=None, reader_source=None):
             for name in (*FILES, "launcher.py"):
                 if name == "app_version.txt":
                     archive.writestr(name, app_version + "\n")
+                elif name == "style_history.py":
+                    archive.writestr(name, packaged_reader(ROOT, reader_source))
                 else:
                     archive.write(ROOT / name, name)
             archive.writestr("update-source.json", json.dumps({"repository": repository} if repository else {}))

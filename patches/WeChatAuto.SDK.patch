@@ -864,10 +864,82 @@ index 3e821d6..c84ba8a 100644
              if (button != null)
              {
 diff --git a/WeChatAuto4_X/WeChatAuto/Components/OwnerGroup.cs b/WeChatAuto4_X/WeChatAuto/Components/OwnerGroup.cs
-index 2748411..8a0ed1e 100644
+index 2748411..b5c896f 100644
 --- a/WeChatAuto4_X/WeChatAuto/Components/OwnerGroup.cs
 +++ b/WeChatAuto4_X/WeChatAuto/Components/OwnerGroup.cs
-@@ -263,8 +263,9 @@ namespace WeChatAuto.Components
+@@ -63,6 +63,59 @@ namespace WeChatAuto.Components
+             return await WeChatInvoker.Call(ChangeOwnerChatGroupNameCore, newGroupName);
+         }
+ 
++        internal Task<Result<string>> RenameActiveGroup(string expectedTitle, string newName) =>
++            WeChatInvoker.Call(RenameActiveGroupCore, expectedTitle, newName);
++
++        private Result<string> RenameActiveGroupCore(UIA3Automation automation, string expectedTitle, string newName)
++        {
++            var title = _Client.ChatContent.ChatHeader.GetTitleCore(automation);
++            if (title.HeaderType != ChatType.群聊 || title.Title != expectedTitle)
++                return Result<string>.Fail("当前群聊已切换。");
++
++            var pane = _GetChatRootPane();
++            try
++            {
++                var fields = pane?.FindAllDescendants(cf => cf.ByControlType(ControlType.Edit))
++                    .Where(field => IsGroupNameLabel(field.Name) || IsGroupNameLabel(field.Properties.LabeledBy.ValueOrDefault?.Name))
++                    .Take(2).ToArray();
++                if (fields?.Length != 1 || !fields[0].IsEnabled)
++                    return Result<string>.Ok(expectedTitle);
++
++                var field = fields[0].AsTextBox();
++                field.Focus();
++                SupperMouseKey.CheckDesktopInput();
++                field.Text = newName;
++                SupperMouseKey.Enter();
++
++                var prompt = Retry.WhileNull(() => _Client.MainWindow.FindFirstDescendant(cf =>
++                        cf.ByControlType(ControlType.Window).And(cf.ByClassName("mmui::XDialog")))?
++                    .FindFirstDescendant(cf => cf.ByControlType(ControlType.Text).And(
++                        cf.ByName("修改群聊名称？").Or(cf.ByName("修改群聊名稱？")).Or(cf.ByName("Change Group Name?")))),
++                    TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(150)).Result;
++                var button = prompt?.GetParent()?.FindFirstDescendant(cf => cf.ByControlType(ControlType.Button).And(
++                    cf.ByName("修改").Or(cf.ByName("Change")).Or(cf.ByName("Confirm"))));
++                if (button?.IsEnabled == true)
++                {
++                    SupperMouseKey.CheckDesktopInput();
++                    button.Click();
++                }
++
++                return Retry.WhileTrue(() => _Client.ChatContent.ChatHeader.GetTitleCore(automation).Title != newName,
++                    TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(150)).Success
++                    ? Result<string>.Ok(newName)
++                    : Result<string>.Fail("未能确认群名称已更新。");
++            }
++            finally
++            {
++                CloseChatInfoPane();
++            }
++        }
++
++        private static bool IsGroupNameLabel(string label) =>
++            label?.Trim().TrimEnd('：', ':') is "群聊名称" or "群聊名稱" ||
++            string.Equals(label?.Trim().TrimEnd('：', ':'), "Group Name", StringComparison.OrdinalIgnoreCase) ||
++            string.Equals(label?.Trim().TrimEnd('：', ':'), "Group Chat Name", StringComparison.OrdinalIgnoreCase);
++
+         private Result ChangeOwnerChatGroupNameCore(UIA3Automation automation, string newGroupName)
+         {
+             var rootPane = this._GetChatRootPane();
+@@ -254,17 +307,17 @@ namespace WeChatAuto.Components
+             if (!result.Success) return result;
+             result = _ClickFinishButton(automation);
+             if (!result.Success) return result;
+-            //修改名称
+             this.CloseChatInfoPane();
+-            result = ChangeOwnerChatGroupNameCore(automation, groupName);
+-
+-            return result;
++            return string.IsNullOrWhiteSpace(groupName)
++                ? Result.Ok()
++                : ChangeOwnerChatGroupNameCore(automation, groupName);
+         }
  
          private Result _ClickFinishButton(UIA3Automation automation)
          {
@@ -879,7 +951,7 @@ index 2748411..8a0ed1e 100644
              if (finishButtonRetry.Success)
              {
                  var finishButton = finishButtonRetry.Result.AsButton();
-@@ -292,11 +293,11 @@ namespace WeChatAuto.Components
+@@ -292,11 +345,11 @@ namespace WeChatAuto.Components
  
          private (bool flowControl, Result value) _ValidTitle(UIA3Automation automation, string firstWho)
          {
@@ -895,7 +967,7 @@ index 2748411..8a0ed1e 100644
              if (!chatInfo.CanTalk())
              {
                  return (flowControl: false, value: Result.Fail($"你想用 {firstWho} 为基准建立群聊，但是当前好友不属于能创建群聊的状态"));
-@@ -309,9 +310,15 @@ namespace WeChatAuto.Components
+@@ -309,9 +362,15 @@ namespace WeChatAuto.Components
              return (flowControl: true, value: null);
          }
  
@@ -912,7 +984,7 @@ index 2748411..8a0ed1e 100644
              if (editRetry.Success)
              {
                  var edit = editRetry.Result.AsTextBox();
-@@ -319,7 +326,8 @@ namespace WeChatAuto.Components
+@@ -319,7 +378,8 @@ namespace WeChatAuto.Components
                  {
                      //点击清空按钮
                      var parent = edit.GetParent();
@@ -922,7 +994,7 @@ index 2748411..8a0ed1e 100644
                      if (clearButotn != null)
                      {
                          clearButotn.Click();
-@@ -328,29 +336,30 @@ namespace WeChatAuto.Components
+@@ -328,29 +388,30 @@ namespace WeChatAuto.Components
                      edit.Text = who.Trim();
                      RandomWait.Wait(1000, 3000);
                      //加好友
@@ -969,7 +1041,7 @@ index 2748411..8a0ed1e 100644
                  }
                  return Result.Ok();
  
-@@ -360,38 +369,21 @@ namespace WeChatAuto.Components
+@@ -360,38 +421,21 @@ namespace WeChatAuto.Components
  
          private Result __ClickAddGroupButton(UIA3Automation automation, string firstWho)
          {
@@ -1018,8 +1090,15 @@ index 2748411..8a0ed1e 100644
              }
              return Result.Fail("错误：没有发现 聊天信息 按钮，请检查原因！");
          }
+@@ -669,4 +713,4 @@ namespace WeChatAuto.Components
+             return Result.Fail("删除群里好友失败！");
+         }
+     }
+-}
+\ No newline at end of file
++}
 diff --git a/WeChatAuto4_X/WeChatAuto/Components/Sender.cs b/WeChatAuto4_X/WeChatAuto/Components/Sender.cs
-index b19c083..9fb534c 100644
+index b19c083..12d17cf 100644
 --- a/WeChatAuto4_X/WeChatAuto/Components/Sender.cs
 +++ b/WeChatAuto4_X/WeChatAuto/Components/Sender.cs
 @@ -475,8 +475,8 @@ namespace WeChatAuto.Components
@@ -1033,7 +1112,27 @@ index b19c083..9fb534c 100644
  		}
  		/// <summary>
  		/// 发送消息
-@@ -520,7 +520,8 @@ namespace WeChatAuto.Components
+@@ -507,6 +507,19 @@ namespace WeChatAuto.Components
+ 			await WeChatInvoker.Call(SendMessageCore, message, atUser, refer);
+ 		}
+ 
++		internal Task<bool> SendToActiveGroup(string expectedTitle, string message) =>
++			WeChatInvoker.Call(SendToActiveGroupCore, expectedTitle, message);
++
++		private bool SendToActiveGroupCore(UIA3Automation automation, string expectedTitle, string message)
++		{
++			var title = _Client.ChatContent.ChatHeader.GetTitleCore(automation);
++			if (title.HeaderType != ChatType.群聊 || title.Title != expectedTitle)
++				return false;
++			SupperMouseKey.CheckDesktopInput();
++			SendMessageCore(automation, message, default);
++			return true;
++		}
++
+ 		private void SendMessageExt(UIA3Automation automation, string who, string message, OneOf<string, string[], List<string>> atUser = default, ChatRefer refer = null)
+ 		{
+ 			if (string.IsNullOrWhiteSpace(who))
+@@ -520,7 +533,8 @@ namespace WeChatAuto.Components
  			else
  			{
  				var result = _Client.Conversations.SearchWhoCore(automation, who);
@@ -1043,6 +1142,32 @@ index b19c083..9fb534c 100644
  					return;
  			}
  			RandomWait.Wait(300, 1200);
+@@ -1180,4 +1194,4 @@ namespace WeChatAuto.Components
+ 			RandomWait.Wait(100, 800);
+ 		}
+ 	}
+-}
+\ No newline at end of file
++}
+diff --git a/WeChatAuto4_X/WeChatAuto/Components/WeChatClient.cs b/WeChatAuto4_X/WeChatAuto/Components/WeChatClient.cs
+index 782d005..544a1e1 100644
+--- a/WeChatAuto4_X/WeChatAuto/Components/WeChatClient.cs
++++ b/WeChatAuto4_X/WeChatAuto/Components/WeChatClient.cs
+@@ -929,6 +929,14 @@ namespace WeChatAuto.Components
+         /// <returns>是否创建成功,如果创建失败，则显示原因,具体请参考<see cref="Result"/></returns>
+         public async Task<Result> CreateOwnerChatGroup(string groupName, string firstWho, string[] memberName) => await this.OwnerGroup.CreateOwnerChatGroup(groupName, firstWho, memberName);
+ 
++        /// <summary>Rename the active group when its editable name field can be identified.</summary>
++        public Task<Result<string>> RenameActiveGroup(string expectedTitle, string newName) =>
++            this.OwnerGroup.RenameActiveGroup(expectedTitle, newName);
++
++        /// <summary>Send to the active group only when its title still matches.</summary>
++        public Task<bool> SendToActiveGroup(string expectedTitle, string message) =>
++            this.ChatContent.Sender.SendToActiveGroup(expectedTitle, message);
++
+         /// <summary>
+         /// 修改群名，适用于自有群群名修改
+         /// </summary>
 diff --git a/WeChatAuto4_X/WeChatAuto/Components/WeChatClientFactory.cs b/WeChatAuto4_X/WeChatAuto/Components/WeChatClientFactory.cs
 index 339e0ac..303deb7 100644
 --- a/WeChatAuto4_X/WeChatAuto/Components/WeChatClientFactory.cs
@@ -1395,7 +1520,7 @@ index dfbe4c2..da6ac26 100644
          public static string MessagePopupMenu_Copy = "/Window[@Name='Weixin']/MenuItem[@Name='复制'][@ClassName='mmui::XMenuView'] | /Window[@Name='Weixin']/MenuItem[@Name='复制'][@ClassName='mmui::XMenu']";
          //消息列表弹出的下载菜单xpath
 diff --git a/WeChatAuto4_X/WeChatAuto/Utils/WeChatAction.cs b/WeChatAuto4_X/WeChatAuto/Utils/WeChatAction.cs
-index 18037ed..26de8f0 100644
+index 18037ed..3c0984f 100644
 --- a/WeChatAuto4_X/WeChatAuto/Utils/WeChatAction.cs
 +++ b/WeChatAuto4_X/WeChatAuto/Utils/WeChatAction.cs
 @@ -7,6 +7,9 @@ using System.Runtime.InteropServices;
@@ -1467,7 +1592,7 @@ index 18037ed..26de8f0 100644
 +
 +        internal static AutomationElement FindChatsTab(AutomationElement navigation) =>
 +            navigation?.FindFirstChild(cf => cf.ByControlType(ControlType.Button)
-+                .And(cf.ByName("微信").Or(cf.ByName("聊天")).Or(cf.ByName("Chats")).Or(cf.ByName("WeChat"))));
++                .And(cf.ByName("微信").Or(cf.ByName("聊天")).Or(cf.ByName("Chats")).Or(cf.ByName("WeChat")).Or(cf.ByName("Weixin"))));
 +
 +        internal static bool IsClientWindowTitle(string title) =>
 +            string.Equals(title, "微信", StringComparison.Ordinal)

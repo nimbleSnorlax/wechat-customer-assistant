@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import http.client
 import io
@@ -17,7 +18,8 @@ from pathlib import Path
 
 EXIT_TO_UPDATE = 75
 FILES = ("server.py", "style_history.py", "index.html", "release_update.py", "app_version.txt")
-BRIDGE_VERSION = "0.1.43"
+READER_WINDOWS_FILES = ("keys/__init__.py", "keys/common.py", "keys/scanner_windows.py")
+BRIDGE_VERSION = "0.1.44"
 BRIDGE_FILES = ("WeChatBridge.dll", "WeChatAuto.dll", "WeAutoCommon.dll")
 BRIDGE_MARKER = "bridge-version.txt"
 VERSION_PATTERN = re.compile(r"v?((?:0|[1-9][0-9]{0,5})\.(?:0|[1-9][0-9]{0,5})\.(?:0|[1-9][0-9]{0,5}))")
@@ -295,6 +297,19 @@ def resolve_release(home, record):
     return None
 
 
+def packaged_reader(root, reader_source=None):
+    source = reader_source or Path(os.environ.get(
+        "WECHAT_ASSISTANT_READER_SOURCE", Path.home() / "wxtools" / "wechat-cli-plus"))
+    bundle = io.BytesIO()
+    with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.write(source / "LICENSE", "LICENSE")
+        for name in READER_WINDOWS_FILES:
+            archive.write(source / "wechat_cli" / name, "wechat_cli/" + name)
+    initializer = base64.b64encode(bundle.getvalue()).decode("ascii")
+    return (root / "style_history.py").read_text(encoding="utf-8").replace(
+        'READER_WINDOWS_MODULES = ""', f'READER_WINDOWS_MODULES = "{initializer}"', 1)
+
+
 def build_package(root, value):
     target = version(value)
     output = root / "dist" / package_name(target)
@@ -305,6 +320,8 @@ def build_package(root, value):
             for name in FILES:
                 if name == "app_version.txt":
                     archive.writestr(name, target + "\n")
+                elif name == "style_history.py":
+                    archive.writestr(name, packaged_reader(root))
                 else:
                     archive.write(root / name, name)
         unpack_release(temporary.read_bytes(), target)

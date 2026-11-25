@@ -152,8 +152,11 @@ internal static class WeChatWindows
             {
                 var root = Environment.GetFolderPath(location);
                 if (!string.IsNullOrWhiteSpace(root))
+                {
                     foreach (var name in ClientNames)
                         yield return Path.Combine(root, "Tencent", name, name + ".exe");
+                    yield return Path.Combine(root, "Tencent", "Weixin", "WeChat", "Weixin.exe");
+                }
             }
         }
         var path = Locations().Where(item => !string.IsNullOrWhiteSpace(item))

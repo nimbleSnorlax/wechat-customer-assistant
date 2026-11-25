@@ -359,8 +359,8 @@ internal static class GroupWorker
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
     }
-    private static Task Result(HttpClient api, Plan plan, string state, string[]? members = null) =>
-        Post(api, "result", new { plan.Id, state, members, completedAt = DateTimeOffset.Now.ToString("O") });
+    private static Task Result(HttpClient api, Plan plan, string state, string[]? members = null, string? actualGroupName = null) =>
+        Post(api, "result", new { plan.Id, state, members, actualGroupName, completedAt = DateTimeOffset.Now.ToString("O") });
 
     internal static string[]? VerifyThreeMembers(IReadOnlyCollection<string> actual, string customer, string adviser, string owner)
     {
@@ -600,18 +600,26 @@ internal static class GroupWorker
             }
             SupperMouseKey.CheckDesktopInput();
             actionStarted = true;
-            var create = await client.CreateOwnerChatGroup(plan.GroupName, "", [adviser.Name]);
+            var create = await client.CreateOwnerChatGroup("", "", [adviser.Name]);
             if (!create.Success) throw new InvalidOperationException("Group creation not confirmed.");
-            var actual = await client.GetChatGroupMemberList(plan.GroupName);
+            var group = await client.GetTitle();
+            if (group.HeaderType != ChatType.群聊 || string.IsNullOrWhiteSpace(group.Title))
+                throw new InvalidOperationException("The newly created group could not be identified.");
+            var actual = await client.GetChatGroupMemberList("");
             var verified = VerifyThreeMembers(actual, target.Name, adviser.Name, client.NickName);
-            if (verified is null || await client.GetOnlyTitle() != plan.GroupName)
+            if (verified is null || await client.GetOnlyTitle() != group.Title)
                 throw new InvalidOperationException("The exact three-person membership could not be verified.");
-            await Result(api, plan, "created", verified);
+
+            var rename = await client.RenameActiveGroup(group.Title, plan.GroupName);
+            if (!rename.Success || await client.GetOnlyTitle() != rename.Value)
+                throw new InvalidOperationException("The group's current name could not be verified.");
+            await Result(api, plan, "created", verified, rename.Value);
             created = true;
 
-            SupperMouseKey.CheckDesktopInput();
-            await client.SendMessage(plan.GroupName, plan.Welcome);
-            var recent = await ReadLatest(client, plan.GroupName);
+            if (stopping.IsCancellationRequested || !await StillCurrent(api, config.Revision)
+                || !await client.SendToActiveGroup(rename.Value, plan.Welcome))
+                throw new InvalidOperationException("The group's welcome could not be safely delivered.");
+            var recent = await ReadLatest(client, rename.Value);
             var sent = recent.Any(message => message.Who == "我" && message.Message == plan.Welcome);
             await Result(api, plan, sent ? "completed" : "welcomeFailed");
             if (!sent) throw new InvalidOperationException("Welcome message delivery could not be confirmed.");
