@@ -26,6 +26,110 @@ HISTORY_PAGE_ROWS = 1000
 MIN_REPLY_CONTEXT = 5
 REPLY_CONTEXT_LIMIT = 50
 DEFAULT_REPLY_CONTEXT = 20
+WECHAT_ALIAS = re.compile(r"[A-Za-z0-9_-]{1,60}")
+CONTACT_LABEL_FIELD = 30
+
+
+def read_varint(data, offset):
+    value = 0
+    for shift in range(0, 70, 7):
+        if offset >= len(data):
+            break
+        byte = data[offset]
+        offset += 1
+        value |= (byte & 0x7f) << shift
+        if not byte & 0x80:
+            return value, offset
+    raise ValueError("Incomplete contact data")
+
+
+def contact_label_ids(data):
+    """Read the comma-separated label IDs from a WeChat contact's extension data."""
+    if not isinstance(data, bytes):
+        return None
+    offset = 0
+    labels = None
+    while offset < len(data):
+        field, offset = read_varint(data, offset)
+        wire_type = field & 7
+        if field < 8 or (field >> 3 == CONTACT_LABEL_FIELD and wire_type != 2):
+            raise ValueError("Unsupported contact label layout")
+        if wire_type == 0:
+            _, offset = read_varint(data, offset)
+            continue
+        if wire_type == 2:
+            size, offset = read_varint(data, offset)
+        elif wire_type in (1, 5):
+            size = 8 if wire_type == 1 else 4
+        else:
+            raise ValueError("Unsupported contact data")
+        end = offset + size
+        if end > len(data):
+            raise ValueError("Incomplete contact data")
+        if field >> 3 == CONTACT_LABEL_FIELD:
+            value = data[offset:end]
+            if not re.fullmatch(rb"[0-9,]*", value):
+                raise ValueError("Unsupported contact label data")
+            if labels is None:
+                labels = set()
+            labels.update(int(part) for part in value.split(b",") if part)
+        offset = end
+    return labels
+
+
+def read_contact_tag_catalog(config_path, profile):
+    app = AppContext(config_path)
+    if not profile or get_self_username(app.db_dir, app.cache, app.decrypted_dir) != profile:
+        return {"error": "本机只读资料与当前微信账号不一致。"}
+    path = app.cache.get("contact/contact.db")
+    if not path:
+        return {"error": "暂时无法读取本机微信通讯录。"}
+    snapshot = Path(path).resolve().as_uri() + "?mode=ro"
+    with closing(sqlite3.connect(snapshot, uri=True, timeout=3)) as connection:
+        owner_row = connection.execute("SELECT alias FROM contact WHERE username=?", (profile,)).fetchone()
+        owner = (owner_row[0] or profile) if owner_row else ""
+        if not WECHAT_ALIAS.fullmatch(owner):
+            return {"error": "无法核对本机资料所属的微信账号。"}
+        labels = {label_id: name.strip() for label_id, name in connection.execute(
+            "SELECT label_id_, label_name_ FROM contact_label ORDER BY sort_order_, label_id_"
+        ) if type(label_id) is int and label_id > 0 and isinstance(name, str) and name.strip()}
+        if not labels:
+            return {"owner": owner, "labels": [], "people": [], "includesUntagged": False}
+        contacts = connection.execute(
+            "SELECT username, alias, remark, nick_name, extra_buffer FROM contact "
+            "WHERE local_type=1 AND delete_flag=0 AND username IS NOT NULL"
+        ).fetchall()
+
+    names, aliases = {}, {}
+    members = []
+    needs_review = False
+    for username, alias, remark, nickname, data in contacts:
+        if (username == profile or username.startswith("gh_") or username.endswith("@chatroom")
+                or username in {"filehelper", "weixin", "fmessage", "medianote", "newsapp", "brandsessionholder",
+                                "notifymessage", "weixinreminder", "appbrandcustomerservicemsg"}):
+            continue
+        alias = alias or username
+        name = (remark or nickname or username).strip()
+        if not WECHAT_ALIAS.fullmatch(alias) or alias.casefold() == owner.casefold() or not 0 < len(name) <= 80:
+            continue
+        names[name] = names.get(name, 0) + 1
+        key = alias.casefold()
+        aliases[key] = aliases.get(key, 0) + 1
+        try:
+            identifiers = contact_label_ids(data)
+        except ValueError:
+            identifiers = None
+        if identifiers is None:
+            needs_review = True
+            continue
+        tags = [name for label_id, name in labels.items() if label_id in identifiers]
+        members.append((alias, name, tags))
+    people = [{"id": f"uia:{owner}:{alias}", "name": name, "tags": tags}
+              for alias, name, tags in members if names[name] == 1 and aliases[alias.casefold()] == 1]
+    if not members and needs_review:
+        return {"error": "当前微信的标签成员资料暂时无法核对。请先在微信里打开通讯录后刷新。"}
+    return {"owner": owner, "labels": list(labels.values()), "people": people,
+            "includesUntagged": not needs_review}
 
 
 def mask_history_text(text):
@@ -239,6 +343,8 @@ if __name__ == "__main__":
                                           selection.get("contextChats", []), selection.get("contextLimit", DEFAULT_REPLY_CONTEXT))
         elif selection.get("mode") == "learning":
             result = history_page(sys.argv[1], selection)
+        elif selection.get("mode") == "tags":
+            result = read_contact_tag_catalog(sys.argv[1], selection["owner"])
         else:
             result = own_replies(sys.argv[1], selection["chats"], selection["days"])
     except Exception:

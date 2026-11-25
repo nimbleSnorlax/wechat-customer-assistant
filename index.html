@@ -283,9 +283,6 @@ legend { margin-bottom:var(--space-2) }
 .analysis-result .btn { margin-block-start:var(--space-3) }
 .detail-row,.file-row { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:var(--space-3); padding:var(--space-3); border:1px solid var(--line); border-radius:var(--radius-1); overflow-wrap:anywhere }
 .file-row + .file-row,.detail-row + .detail-row { margin-top:var(--space-2) }
-.customer-assignments { display:grid; gap:var(--space-2); min-width:0 }
-.customer-assignments strong { display:block; overflow-wrap:anywhere }
-.customer-assignments .inline { gap:var(--space-1) }
 .contact-search input { flex:1 1 12rem }
 .upload { background:var(--surface); border:1px dashed var(--line); border-radius:var(--radius-2); padding:var(--space-5); display:grid; gap:var(--space-3); justify-items:start }
 .upload input { width:100%; min-width:0; overflow:hidden }
@@ -511,8 +508,8 @@ legend { margin-bottom:var(--space-2) }
           <div class="card-head form-head"><div><h2>自动回复</h2></div></div>
           <div class="panel-body">
             <div class="field">
-              <label class="choice"><input type="checkbox" id="reply-enabled" aria-describedby="reply-switch-hint">开启私聊自动回复</label>
-              <small id="reply-switch-hint">保存后在后台接收消息，发送时需微信在前台。</small>
+              <label class="choice"><input type="checkbox" id="reply-enabled" aria-describedby="reply-switch-hint" checked>开启私聊自动回复</label>
+              <small id="reply-switch-hint">后台接收新消息。需要回复时，助手会尝试切到微信发送。</small>
             </div>
             <fieldset><legend>回复方式</legend><div class="inline">
               <label class="choice"><input type="radio" name="reply-mode" value="fixed" checked>固定话术</label>
@@ -598,16 +595,16 @@ legend { margin-bottom:var(--space-2) }
     <section data-panel="group" hidden>
       <div class="settings-grid">
         <form class="card" id="group-form">
-          <div class="card-head form-head"><div><h2>自动建群</h2><p class="small">每个群由当前微信发起，成员是当前微信、客户和该客户的对接人。</p></div></div>
+          <div class="card-head form-head"><div><h2>自动建群</h2><p class="small">收到符合条件的私聊消息后，当前微信会将发消息的人和指定的对接人拉进同一个群。</p></div></div>
           <div class="panel-body">
             <div class="field"><label for="group-name">群名模板</label><input class="input" id="group-name" maxlength="80" required><small>用 {客户} 作为客户名字的占位符。</small></div>
             <div class="field">
               <label class="choice"><input id="group-enabled" type="checkbox" aria-describedby="group-switch-hint">开启自动建群</label>
-              <small id="group-switch-hint">保存后在后台判断建群条件，执行时需微信在前台。</small>
+              <small id="group-switch-hint">后台判断私聊消息是否符合条件，建群时会将微信切到前台。</small>
             </div>
             <div class="field">
-              <span id="customer-assignment-label">客户与对接人</span>
-              <div class="customer-assignments" id="group-customers" role="group" aria-labelledby="customer-assignment-label"></div>
+              <span id="group-adviser-label">固定对接人</span>
+              <div id="group-adviser" role="group" aria-labelledby="group-adviser-label"></div>
             </div>
             <div class="field">
               <label for="group-trigger">什么情况触发建群</label>
@@ -639,8 +636,7 @@ legend { margin-bottom:var(--space-2) }
         </form>
         <div class="card">
           <div class="card-head form-head">
-            <div><h2 id="contact-title">从微信通讯录选择</h2><p class="small" id="contact-instruction">先添加客户，再为每位客户指定一位对接人。</p></div>
-            <button class="btn sm" type="button" id="cancel-adviser" hidden>取消选择</button>
+            <div><h2>选择对接人</h2><p class="small">从微信通讯录选一位加入新群的对接人。</p></div>
           </div>
           <div class="panel-body">
             <form id="contact-form" class="inline contact-search">
@@ -794,8 +790,8 @@ let currentView = "setup";
 const openViews = ["setup"];
 let conversations = [], styleConversationsLoaded = false, styleConversationsLoading = false;
 let recordKind = "reply", nextRecord = null, recordTicket = 0, recordLoading = false, readingOlderRecords = false;
-let customers = [], contacts = [], modelHasKey = null;
-let adviserTarget = null, contactQueryTicket = 0, localAccountId = "";
+let groupAdviser = null, contacts = [], modelHasKey = null;
+let contactQueryTicket = 0, localAccountId = "";
 let replyTargets = [], replyContacts = [];
 let replyTagSelection = new Set(), replyTagDirectory = null;
 let settingsReady = false;
@@ -1140,7 +1136,8 @@ function paintAutomationStatus(kind) {
   if (indicator.querySelector("b").textContent !== label) indicator.querySelector("b").textContent = label;
   indicator.title = state === "workbench_paused" ? "微信窗口操作已暂停。"
     : state === "paused" ? "把已登录的电脑版微信切到前台后开始监听。"
-    : state === "reply_pending" ? "微信回到前台后会核对并回复。" : "";
+    : state === "reply_pending" ? "已在后台接收消息，等待切到微信后核对并发送。"
+    : state === "disconnected" ? "暂时未识别到已登录的电脑版微信窗口。" : "";
 }
 function applyAutomationStatus(status) {
   automationPaused = typeof status.paused === "boolean" ? status.paused : null;
@@ -1542,78 +1539,43 @@ document.querySelectorAll("[data-tone]").forEach(button => button.addEventListen
 $("tone").addEventListener("input",renderTone);
 $("model-url").addEventListener("input",describeModel);
 $("model-name").addEventListener("input",describeModel);
-function renderAssignments() {
-  const rows = customers.map(customer => {
-    const row = element("div","detail-row");
-    const person = element("div");
-    const name = privacy ? "客户" : customer.name;
-    const assigned = customer.adviser;
-    person.append(element("strong","",name),element("span","small",assigned
-      ? "对接人 · " + (privacy ? "已指定" : assigned.name) : "待指定一位对接人"));
-    const controls = element("div","inline");
-    const choose = action(assigned ? "更换对接人" : "指定对接人","btn sm",() => pickAdviser(customer.id));
-    choose.setAttribute("aria-label","为 " + name + (assigned ? " 更换对接人" : " 指定对接人"));
+function renderGroupAdviser() {
+  const row = element("div","detail-row");
+  if (groupAdviser) {
     const remove = action("移除","btn sm",() => {
-      customers = customers.filter(item => item.id !== customer.id);
-      if (adviserTarget === customer.id) pickAdviser(null,false);
-      renderAssignments();
+      groupAdviser = null;
+      $("group-enabled").checked = false;
+      renderGroupAdviser();
       renderContacts();
+      note("group-feedback","对接人已移除，保存后关闭自动建群。");
+      $("contact-query").focus();
     });
-    remove.setAttribute("aria-label","移除客户 " + name);
-    controls.append(choose,remove);
-    row.append(person,controls);
-    return row;
-  });
-  $("group-customers").replaceChildren(...rows);
-  if (!rows.length) $("group-customers").append(element("p","small","从右侧通讯录添加客户。"));
+    remove.setAttribute("aria-label","移除对接人");
+    row.append(element("strong","",privacy ? "已选择对接人" : groupAdviser.name),remove);
+  } else {
+    row.append(element("span","small","尚未选择"),
+      action("选择对接人","btn sm",() => $("contact-query").focus()));
+  }
+  $("group-adviser").replaceChildren(row);
 }
-function pickAdviser(id, focus = true) {
-  adviserTarget = id;
-  ++contactQueryTicket;
-  contacts = [];
-  $("contact-query").value = "";
-  note("contact-feedback","");
-  const target = customers.find(item => item.id === id);
-  $("cancel-adviser").hidden = !target;
-  note("contact-title",target ? "指定一位对接人" : "从微信通讯录选择");
-  note("contact-instruction",target ? "为 " + (privacy ? "选定客户" : target.name) + " 选择联系人。"
-    : "先添加客户，再为每位客户指定一位对接人。");
+
+function changeGroupAdviser(person) {
+  groupAdviser = person;
+  renderGroupAdviser();
   renderContacts();
-  if (focus) $("contact-query").focus();
+  note("group-feedback","对接人已选定，保存后生效。");
+  $("contact-query").focus();
 }
-$("cancel-adviser").addEventListener("click",() => pickAdviser(null));
 
 function renderContacts() {
-  const target = customers.find(item => item.id === adviserTarget);
   $("contact-results").replaceChildren(...contacts.map(person => {
     const row = element("div","detail-row");
-    const alreadyCustomer = customers.some(item => item.id === person.id);
     const isOwner = person.id === localAccountId;
-    const matchesTarget = target && (target.id === person.id || target.name === person.name);
-    const selected = target?.adviser?.id === person.id;
-    let label = target ? "设为对接人" : "添加为客户";
-    if (isOwner) label = "当前微信";
-    else if (matchesTarget) label = "当前客户";
-    else if (selected) label = "已指定";
-    else if (!target && alreadyCustomer) label = "已添加";
-    const add = action(label,"btn sm",() => {
-      if (target) {
-        target.adviser = person;
-        pickAdviser(null,false);
-        renderAssignments();
-        note("contact-feedback","对接人已选定，保存后生效。");
-        return;
-      }
-      if (customers.length >= 20) {
-        note("contact-feedback","最多可以配置 20 位触发客户。",true);
-        return;
-      }
-      customers.push({id:person.id,name:person.name,adviser:null});
-      renderAssignments();
-      renderContacts();
-    });
-    add.disabled = Boolean(isOwner || matchesTarget || selected || (!target && alreadyCustomer));
-    row.append(element("strong","",privacy ? "联系人" : person.name),add);
+    const selected = groupAdviser?.id === person.id;
+    const choose = action(isOwner ? "当前微信" : selected ? "已选为对接人" : "设为对接人",
+      "btn sm",() => changeGroupAdviser(person));
+    choose.disabled = isOwner || selected;
+    row.append(element("strong","",privacy ? "联系人" : person.name),choose);
     return row;
   }));
 }
@@ -1712,7 +1674,7 @@ async function loadReplyTags() {
 }
 $("sync-reply-tags").addEventListener("click",async () => {
   await pending($("sync-reply-tags"),"正在读取",async () => {
-    note("reply-tag-feedback","正在读取微信标签与联系人，请保持电脑版微信打开。");
+    note("reply-tag-feedback","正在从本机资料读取微信标签和成员。");
     try {
       replyTagDirectory = await jsonRequest("/api/wechat-tags/sync","POST",{});
       renderReplyTags();
@@ -1747,7 +1709,7 @@ $("reply-contact-search").addEventListener("click",() => {
 async function loadSettings() {
   try {
     const data = await request("/api/settings");
-    $("reply-enabled").checked = data.reply.enabled;
+    $("reply-enabled").checked = data.reply.enabled || !data.reply.enabledConfigured;
     $("reply-context-count").value = data.reply.contextMessages;
     document.querySelector('input[name="reply-mode"][value="' + (data.reply.mode === "model" ? "model" : "fixed") + '"]').checked = true;
     $("reply-fixed").value = data.reply.fixedText;
@@ -1764,7 +1726,7 @@ async function loadSettings() {
     if (!settingsReady) $("style-model").checked = Boolean(data.reply.baseUrl && data.reply.model);
     loadSetupFields(data.reply);
     $("group-name").value = data.group.name;
-    customers = data.group.customers || [];
+    groupAdviser = data.group.adviser || null;
     $("group-enabled").checked = Boolean(data.group.enabled);
     $("group-trigger").value = data.group.triggerRule || "";
     $("group-welcome").value = data.group.welcome || "";
@@ -1776,7 +1738,8 @@ async function loadSettings() {
     paintAutomationStatus("group");
     describeModel();
     renderTone();
-    renderAssignments();
+    renderGroupAdviser();
+    if (data.group.reviewScope) note("group-feedback","建群范围已改为符合条件的私聊消息。请确认对接人和条件，再开启并保存。");
   } catch(error) {
     note("reply-feedback",error.message,true);
     note("model-feedback",error.message,true);
@@ -1934,19 +1897,22 @@ $("preview-form").addEventListener("submit",event => {
 $("group-form").addEventListener("submit",event => {
   event.preventDefault();
   if (!settingsReady) return;
+  if ($("group-enabled").checked && !groupAdviser) {
+    note("group-feedback","请先选择一位对接人。",true);
+    $("contact-query").focus();
+    return;
+  }
   pending($("save-group"),"正在保存",async () => {
+    const adviser = groupAdviser;
     try {
       const saved = await jsonRequest("/api/settings/group","PUT",{
         name:$("group-name").value, enabled:$("group-enabled").checked,
-        triggerRule:$("group-trigger").value, welcome:$("group-welcome").value, customers
+        triggerRule:$("group-trigger").value, welcome:$("group-welcome").value, adviser
       });
-      customers = saved.customers;
       savedAutomation.group = Boolean(saved.enabled);
       paintAutomationStatus("group");
       void loadAutomationStatus();
-      renderAssignments();
-      renderContacts();
-      note("group-feedback","建群设置已保存。");
+      if (groupAdviser === adviser) note("group-feedback","建群设置已保存。");
     } catch(error) { note("group-feedback",error.message,true); }
   });
 });
@@ -1973,6 +1939,9 @@ $("group-test").addEventListener("click",() => {
 $("contact-form").addEventListener("submit",event => {
   event.preventDefault();
   const ticket = ++contactQueryTicket;
+  contacts = [];
+  renderContacts();
+  note("contact-feedback","");
   pending($("contact-search"),"搜索中",async () => {
     try {
       const results = await request("/api/contacts?q=" + encodeURIComponent($("contact-query").value));

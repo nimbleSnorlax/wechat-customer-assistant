@@ -42,6 +42,8 @@ SDK = Path(os.environ.get("WECHAT_ASSISTANT_SDK", APP_HOME / ".run" / "sdk" / "W
 DOTNET = Path(os.environ.get("WECHAT_ASSISTANT_DOTNET", APP_HOME / ".dotnet" / "dotnet.exe"))
 NATIVE_CONTACTS = os.environ.get("WECHAT_ASSISTANT_NATIVE_CONTACTS") == "1"
 NATIVE_CONTACT_ID = re.compile(r"uia:([A-Za-z0-9_-]{1,60}):([A-Za-z0-9_-]{1,60})")
+SYSTEM_CONTACTS = {"filehelper", "weixin", "fmessage", "medianote", "newsapp", "brandsessionholder",
+                   "notifymessage", "weixinreminder", "appbrandcustomerservicemsg"}
 SDK_WINDOW_LOCK = threading.Lock()
 SDK_CHILD = None
 BACKGROUND_LOCK = threading.Lock()
@@ -89,7 +91,7 @@ DEFAULTS = {
     },
     "group": {
         "name": "项目沟通-{客户}",
-        "enabled": False, "customers": [],
+        "enabled": False, "adviser": None,
         "triggerRule": "客户明确说出想办理的服务、需要具体方案或报价，或希望安排顾问跟进。只打招呼、泛泛问价或仍在考虑时不建群。",
         "welcome": "您好，已经为您安排了专业顾问。有任何问题，您可以随时联系顾问，也可以在群里联系我。",
     },
@@ -180,7 +182,11 @@ def read_settings():
     with closing(database()) as connection:
         saved = {row["name"]: json.loads(row["value"]) for row in
                  connection.execute("SELECT * FROM settings WHERE name IN ('reply', 'group')")}
-    reply = DEFAULTS["reply"] | saved.get("reply", {}) | {"backgroundReceive": True}
+    saved_reply = saved.get("reply", {})
+    reply = DEFAULTS["reply"] | saved_reply | {
+        "backgroundReceive": True,
+        "enabledConfigured": saved_reply.get("enabledConfigured", "enabled" in saved_reply),
+    }
     count = reply["contextMessages"]
     reply["contextMessages"] = (
         min(MAX_REPLY_CONTEXT_MESSAGES, max(MIN_REPLY_CONTEXT_MESSAGES, count))
@@ -191,16 +197,21 @@ def read_settings():
 
 def normalize_group_settings(saved):
     group = {key: saved.get(key, value) for key, value in DEFAULTS["group"].items()}
-    members = saved.get("members", [])
-    legacy_adviser = members[0] if len(members) == 1 and saved.get("includeCustomer", True) else None
-    customers = []
-    for customer in group["customers"]:
-        adviser = customer.get("adviser", legacy_adviser)
-        if adviser and (adviser["id"] == customer["id"] or adviser["name"] == customer["name"]):
-            adviser = None
-        customers.append({"id": customer["id"], "name": customer["name"], "adviser": adviser})
-    group["customers"] = customers
-    group["enabled"] = bool(group["enabled"] and customers and all(item["adviser"] for item in customers))
+    if "adviser" not in saved:
+        members = saved.get("members", [])
+        legacy = members[0] if len(members) == 1 and saved.get("includeCustomer", True) else None
+        advisers = {}
+        for customer in saved.get("customers", []):
+            adviser = customer.get("adviser", legacy)
+            if adviser and adviser["id"] != customer["id"] and adviser["name"] != customer["name"]:
+                advisers[adviser["id"]] = adviser
+        if len(advisers) == 1:
+            group["adviser"] = next(iter(advisers.values()))
+        elif not advisers and not saved.get("customers"):
+            group["adviser"] = legacy
+        group["reviewScope"] = bool(saved.get("enabled"))
+        group["enabled"] = False
+    group["enabled"] = bool(group["enabled"] and group["adviser"])
     return group
 
 
@@ -400,23 +411,17 @@ def group_contact(item):
     return {"id": identifier, "name": name}
 
 
-def group_customers(items, previous):
+def configured_reply_contacts(items):
     if not isinstance(items, list) or len(items) > 20:
-        raise AppError("最多可配置 20 位触发客户。")
-    old_advisers = {customer["id"]: customer["adviser"] for customer in previous}
+        raise AppError("最多可配置 20 位自动回复联系人。")
     result = {}
     names = set()
     for item in items:
-        customer = group_contact(item)
-        identifier = customer["id"]
-        if identifier in result or customer["name"] in names:
-            raise AppError("触发客户重复或同名，请检查客户备注。")
-        raw_adviser = item.get("adviser", old_advisers.get(identifier))
-        adviser = group_contact(raw_adviser) if raw_adviser is not None else None
-        if adviser and (adviser["id"] == identifier or adviser["name"] == customer["name"]):
-            raise AppError("客户和对接人必须是两个人，显示名称也需要能够区分。")
-        names.add(customer["name"])
-        result[identifier] = customer | {"adviser": adviser}
+        contact = group_contact(item)
+        if contact["id"] in result or contact["name"] in names:
+            raise AppError("联系人重复或同名，请检查联系人备注。")
+        names.add(contact["name"])
+        result[contact["id"]] = contact
     return list(result.values())
 
 
@@ -427,7 +432,8 @@ def label_names(items):
 
 
 def read_wechat_tags():
-    return release_update.read_json(DATA / "wechat-tags.json")
+    catalog = release_update.read_json(DATA / "wechat-tags.json")
+    return {} if catalog.get("profile") and catalog["profile"] != history_profile() else catalog
 
 
 def reply_targets(reply, catalog=None):
@@ -452,9 +458,15 @@ def public_wechat_tags(catalog):
             "syncedAt": catalog.get("syncedAt"), "canExclude": bool(catalog.get("includesUntagged"))}
 
 
-def background_configuration_error(reply, targets, catalog):
+def background_source_error():
     if not CLI.is_file() or not CLI_CONFIG.is_file() or not CLI_PYTHON.is_file() or not history_profile():
         return "后台接收需要已配置的本机只读查询工具。"
+    return ""
+
+
+def background_configuration_error(reply, targets, catalog):
+    if error := background_source_error():
+        return error
     if reply["enabled"] and reply["scope"] == "tags":
         owner = catalog.get("owner", "").casefold()
         matches = [NATIVE_CONTACT_ID.fullmatch(target["id"]) for target in targets]
@@ -474,6 +486,7 @@ def save_settings(section, value, *, completing_setup=False):
     if section == "reply":
         previous = read_settings()["reply"]
         enabled = value.get("enabled", previous["enabled"])
+        enabled_configured = previous["enabledConfigured"] or (not completing_setup and "enabled" in value)
         mode = value.get("mode", previous["mode"])
         scope = value.get("scope", previous["scope"])
         tag_rule = value.get("tagRule", previous["tagRule"])
@@ -488,8 +501,7 @@ def save_settings(section, value, *, completing_setup=False):
         if type(context_messages) is not int or not MIN_REPLY_CONTEXT_MESSAGES <= context_messages <= MAX_REPLY_CONTEXT_MESSAGES:
             raise AppError(f"上下文条数请输入 {MIN_REPLY_CONTEXT_MESSAGES} 至 {MAX_REPLY_CONTEXT_MESSAGES} 的整数。")
         tags = label_names(value.get("tags", previous["tags"]))
-        targets = group_customers(value.get("targets", previous["targets"]), [])
-        targets = [{"id": target["id"], "name": target["name"]} for target in targets]
+        targets = configured_reply_contacts(value.get("targets", previous["targets"]))
         test_contact = previous["testContact"]
         if completing_setup:
             test_contact = group_contact(value.get("testContact"))
@@ -529,7 +541,8 @@ def save_settings(section, value, *, completing_setup=False):
         if mode == "model" and (completing_setup or enabled and remote_model) and not (
                 credential or has_model_key(value["baseUrl"])):
             raise AppError("请先填写 AI Key。")
-        value.update(enabled=enabled, mode=mode, targets=targets, scope=scope, tags=tags, tagRule=tag_rule,
+        value.update(enabled=enabled, enabledConfigured=enabled_configured,
+                     mode=mode, targets=targets, scope=scope, tags=tags, tagRule=tag_rule,
                      mimicTone=mimic_tone, contextMessages=context_messages, backgroundReceive=True,
                      setupComplete=completing_setup or previous["setupComplete"],
                      testContact=test_contact)
@@ -538,12 +551,17 @@ def save_settings(section, value, *, completing_setup=False):
         enabled = value.get("enabled", previous["enabled"])
         if not isinstance(enabled, bool):
             raise AppError("建群开关配置有误。")
-        customers = group_customers(value.get("customers", previous["customers"]), previous["customers"])
-        if enabled and (not customers or any(not item["adviser"] for item in customers)):
-            raise AppError("开启前，请给每位触发客户指定一位对接人。")
+        adviser = value.get("adviser", previous["adviser"])
+        if adviser is not None:
+            adviser = group_contact(adviser)
+            native = NATIVE_CONTACT_ID.fullmatch(adviser["id"])
+            if adviser["id"] == history_profile() or native and native[1].casefold() == native[2].casefold():
+                raise AppError("请从通讯录选择当前微信以外的对接人。")
+        if enabled and not adviser:
+            raise AppError("开启自动建群前，请选择一位对接人。")
         value = {
             "name": text_field(value.get("name", ""), 80, "群名模板", True),
-            "customers": customers, "enabled": enabled,
+            "adviser": adviser, "enabled": enabled,
             "triggerRule": text_field(value.get("triggerRule", previous["triggerRule"]), 1500, "触发条件", True),
             "welcome": text_field(value.get("welcome", previous["welcome"]), 1000, "群内欢迎语", True),
         }
@@ -559,9 +577,13 @@ def save_settings(section, value, *, completing_setup=False):
         settings[section] = value
         reply_settings = settings["reply"]
         if value["enabled"]:
-            catalog = read_wechat_tags() if reply_settings["scope"] == "tags" else {}
-            error = background_configuration_error(
-                reply_settings, reply_targets(reply_settings, catalog), catalog)
+            if section == "group":
+                if not (reply_settings["baseUrl"] and reply_settings["model"]):
+                    raise AppError("请先在「AI 配置」中设置模型，再开启自动建群。")
+                error = background_source_error()
+            else:
+                catalog = read_wechat_tags() if reply_settings["scope"] == "tags" else {}
+                error = background_configuration_error(reply_settings, reply_targets(reply_settings, catalog), catalog)
             if error:
                 raise AppError(error)
         connection.execute("INSERT INTO settings VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET value=excluded.value",
@@ -713,9 +735,19 @@ def sdk_contacts(query):
 
 
 def sync_wechat_tags():
-    if read_account()["windows"] != 1:
-        raise AppError("请先在运行工作台的电脑上登录微信，再读取标签。", 409)
-    payload = run_sdk_directory(("--tag-directory",), 240)
+    profile = history_profile()
+    command = [str(CLI_PYTHON), str(ROOT / "style_history.py"), str(CLI_CONFIG)]
+    if not profile or not CLI_PYTHON.is_file():
+        raise AppError("请先配置当前微信的本机只读查询，再读取标签。", 409)
+    try:
+        with CLI_LOCK:
+            result = run_local(command, 30, json.dumps({"mode": "tags", "owner": profile}))
+        payload = json.loads(result.stdout) if result.returncode == 0 else None
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        payload = None
+    if not isinstance(payload, dict) or payload.get("error"):
+        raise AppError(payload["error"] if isinstance(payload, dict) and payload.get("error")
+                       else "暂时无法从本机资料读取微信标签，请稍后重试。", 503)
     owner = text_field(payload.get("owner"), 60, "当前微信账号", True)
     labels = label_names(payload.get("labels"))
     includes_untagged = payload.get("includesUntagged") is True
@@ -728,7 +760,9 @@ def sync_wechat_tags():
         tags = [tag for tag in label_names(row.get("tags")) if tag in labels]
         if tags or includes_untagged:
             people[contact["id"]] = contact | {"tags": tags}
-    catalog = {"owner": owner, "labels": labels, "people": list(people.values()),
+    if history_profile() != profile:
+        raise AppError("读取时微信资料账号已更换，请重新读取标签。", 409)
+    catalog = {"owner": owner, "profile": profile, "labels": labels, "people": list(people.values()),
                "includesUntagged": includes_untagged, "syncedAt": datetime.now(timezone.utc).isoformat()}
     release_update.write_json(DATA / "wechat-tags.json", catalog)
     return public_wechat_tags(catalog)
@@ -1247,10 +1281,9 @@ def automation_revision(settings, catalog=None):
 
 def automation_readiness(reply, group, selected_targets, catalog):
     model_ready = bool(reply["baseUrl"] and reply["model"])
-    group_ready = group["enabled"] and model_ready
-    reply_ready = bool(reply["enabled"] and selected_targets and (reply["mode"] == "fixed" or model_ready))
-    if (reply_ready or group_ready) and background_configuration_error(reply, selected_targets, catalog):
-        reply_ready = group_ready = False
+    group_ready = bool(group["enabled"] and group["adviser"] and model_ready and not background_source_error())
+    reply_ready = bool(reply["enabled"] and selected_targets and (reply["mode"] == "fixed" or model_ready)
+                       and not background_configuration_error(reply, selected_targets, catalog))
     return reply_ready, group_ready
 
 
@@ -1298,27 +1331,30 @@ def group_runtime(resolve=False):
             raise AppError("当前微信账号与联系人目录不一致，请重新读取。", 409)
         return item | {"alias": match[2]}
     customers = []
-    for item in group["customers"] if group_ready else []:
-        if profile in (item["id"], item["adviser"]["id"]):
-            raise AppError("当前微信会自动加入群，客户和对接人请选择其他联系人。", 409)
-        customer = resolve_contact(item)
-        adviser = resolve_contact(item["adviser"])
-        if len({owner["alias"].casefold(), customer["alias"].casefold(), adviser["alias"].casefold()}) != 3:
-            raise AppError("群成员需要是三个不同的微信账号。", 409)
-        customers.append(customer | {"adviser": adviser})
+    if group_ready:
+        adviser = resolve_contact(group["adviser"])
+        if adviser["alias"].casefold() == owner["alias"].casefold():
+            raise AppError("请从通讯录选择当前微信以外的对接人。", 409)
+        # The desktop worker's existing protocol resolves only verified incoming senders.
+        with BACKGROUND_LOCK:
+            if BACKGROUND_INBOX["revision"] == (result["revision"], profile):
+                customers = [item["groupCustomer"] | {"adviser": adviser}
+                             for item in BACKGROUND_INBOX["pending"].values() if item.get("groupEligible")]
     targets = [resolve_contact(item) for item in selected_targets] if reply_ready else []
     if any(item["alias"].casefold() == owner["alias"].casefold() for item in targets):
         raise AppError("自动回复联系人请选其他微信账号。", 409)
     return result | {"ownerAlias": owner["alias"], "customers": customers, "replyTargets": targets}
 
 
-def history_contact_alias(username):
+def history_private_contact(username):
     row = wechat_cli("contacts", "--format", "json", "--detail=" + username, timeout=5)
     if (isinstance(row, dict) and row.get("username") == username
             and row.get("is_group") is False and not row.get("is_subscription")):
         alias = row.get("alias") or username
-        return alias.casefold() if isinstance(alias, str) else ""
-    return ""
+        name = row.get("remark") or row.get("nick_name") or username
+        if isinstance(alias, str) and isinstance(name, str):
+            return {"id": username, "alias": alias, "name": name}
+    return None
 
 
 def background_contact_index(contacts):
@@ -1351,12 +1387,18 @@ def read_background_texts(owner, chats, context_chats=(), context_limit=DEFAULTS
     raise AppError("后台接收暂时无法核对消息来源。", 503)
 
 
+def existing_group_job(connection, group_id, former_id):
+    return connection.execute(
+        "SELECT 1 FROM group_jobs WHERE customer_id=? OR customer_id COLLATE NOCASE=?", (group_id, former_id),
+    ).fetchone()
+
+
 def background_action(pending, settings):
     for chat, item in sorted(pending.items(), key=lambda entry: bool(entry[1].get("focusAttempted"))):
         group_id = item.get("groupCustomerId")
         if group_id and "groupEligible" not in item:
             with closing(database()) as connection:
-                exists = connection.execute("SELECT 1 FROM group_jobs WHERE customer_id=?", (group_id,)).fetchone()
+                exists = existing_group_job(connection, group_id, item["formerGroupId"])
             item["groupEligible"] = not exists and classify_group_request(
                 settings["reply"], settings["group"]["triggerRule"], item["message"])["eligible"]
         if item.get("groupEligible"):
@@ -1407,25 +1449,39 @@ def next_background_message(revision):
         if not (reply_ready or group_ready) or revision != automation_revision(settings, catalog):
             return None
         reply_ids, reply_aliases, reply_owners = background_contact_index(targets if reply_ready else [])
-        group_ids, group_aliases, group_owners = background_contact_index(group["customers"] if group_ready else [])
-        native_owners = reply_owners | group_owners
+        adviser_id = group["adviser"]["id"] if group_ready else ""
+        adviser_native = NATIVE_CONTACT_ID.fullmatch(adviser_id)
+        native_owners = reply_owners | ({adviser_native[1].casefold()} if adviser_native else set())
         profile = history_profile()
         key = (revision, profile)
         first = key != inbox["revision"]
-        if native_owners and first and native_owners != {history_contact_alias(profile)}:
-            raise AppError("本机查询工具的微信账号与通讯录不一致。", 409)
+        owner_alias = inbox.get("ownerAlias", "")
+        owner_name = inbox.get("ownerName", "")
+        adviser_alias = inbox.get("adviserAlias", "")
+        if first:
+            owner = history_private_contact(profile) if native_owners or group_ready else None
+            owner_alias = owner["alias"].casefold() if owner else ""
+            owner_name = owner["name"].casefold() if owner else ""
+            if native_owners and native_owners != {owner_alias}:
+                raise AppError("本机查询工具的微信账号与通讯录不一致。", 409)
+            if group_ready:
+                adviser = history_private_contact(adviser_id) if not adviser_native else None
+                adviser_alias = adviser_native[2].casefold() if adviser_native else (adviser["alias"].casefold() if adviser else "")
+                if not owner_alias or not adviser_alias or owner_alias == adviser_alias:
+                    raise AppError("无法核对当前微信和对接人的账号，请重新选择对接人。", 409)
         sessions = wechat_cli("sessions", "--limit", 200, "--format", "json", timeout=12)
         if not isinstance(sessions, list):
             raise AppError("后台接收暂时无法读取会话。", 503)
         now = int(time.time())
         ready_at_start = set()
         if first:
-            inbox.update(revision=key, started=now, seen={}, pending={}, aliases={})
+            inbox.update(revision=key, started=now, seen={}, pending={}, contacts={},
+                         ownerAlias=owner_alias, ownerName=owner_name, adviserAlias=adviser_alias)
             with closing(database()) as connection:
                 ready_at_start = {row["id"] for row in connection.execute(
                     "SELECT id FROM reply_jobs WHERE state='ready' AND revision=?", (revision,))}
         seen, pending = inbox["seen"], inbox["pending"]
-        known_aliases = inbox["aliases"]
+        known_contacts = inbox["contacts"]
         lookups = 0
         candidates = {}
         for row in sessions:
@@ -1433,8 +1489,8 @@ def next_background_message(revision):
                 continue
             chat = row.get("username")
             stamp, text = row.get("timestamp"), row.get("last_message")
-            if (not isinstance(chat, str) or chat == profile
-                    or (not native_owners and chat not in reply_ids and chat not in group_ids)
+            if (not isinstance(chat, str) or chat == profile or chat in SYSTEM_CONTACTS or chat.startswith("gh_")
+                    or (not (reply_aliases or group_ready) and chat not in reply_ids)
                     or type(stamp) is not int
                     or stamp > now + 30 or not isinstance(text, str)):
                 continue
@@ -1450,32 +1506,35 @@ def next_background_message(revision):
                     or row.get("msg_type") != "文本" or not 0 < len(text) <= 2800):
                 seen[chat] = fingerprint
                 continue
-            if native_owners and chat not in known_aliases:
+            check_group = group_ready and not reconnecting and chat != adviser_id
+            if (reply_aliases or check_group) and chat not in known_contacts:
                 if lookups >= 3:
                     continue
                 lookups += 1
                 try:
-                    known_aliases[chat] = history_contact_alias(chat)
+                    known_contacts[chat] = history_private_contact(chat)
                 except AppError:
                     continue
-            alias = known_aliases.get(chat)
+            person = known_contacts.get(chat)
+            alias = person["alias"].casefold() if person else ""
             reply_id = chat if chat in reply_ids else reply_aliases.get(alias)
-            group_id = chat if chat in group_ids else group_aliases.get(alias)
+            customer = person if check_group and alias and alias not in (owner_alias, adviser_alias) else None
+            if customer and customer["name"].casefold() in {owner_name, group["adviser"]["name"].casefold()}:
+                customer = None
             if reconnecting:
                 event = hashlib.sha256(f"background\n{chat}\n{stamp}\n{text_hash}".encode()).hexdigest()
                 if not reply_id or event not in ready_at_start:
                     seen[chat] = fingerprint
                     continue
-                group_id = None
-            if not (reply_id or group_id):
+            if not (reply_id or customer):
                 seen[chat] = fingerprint
                 continue
             if len(candidates) < 6:
-                candidates[chat] = (fingerprint, reply_id, group_id)
+                candidates[chat] = (fingerprint, reply_id, customer)
         if candidates:
             context_chats = [chat for chat, (_, reply_id, _) in candidates.items() if reply_id and reply["mode"] == "model"]
             verified = read_background_texts(profile, list(candidates), context_chats, reply["contextMessages"])
-            for chat, (fingerprint, reply_id, group_id) in candidates.items():
+            for chat, (fingerprint, reply_id, customer) in candidates.items():
                 row = verified.get(chat)
                 stamp = fingerprint[0]
                 if not isinstance(row, dict) or row.get("timestamp") != stamp:
@@ -1486,7 +1545,10 @@ def next_background_message(revision):
                     continue
                 text_hash = hashlib.sha256(text.encode()).hexdigest()
                 event = hashlib.sha256(f"background\n{chat}\n{stamp}\n{text_hash}".encode()).hexdigest()
+                group_id = customer["id"] if customer else None
                 pending[chat] = {"customerId": group_id or reply_id, "groupCustomerId": group_id,
+                                 "groupCustomer": customer,
+                                 "formerGroupId": f"uia:{owner_alias}:{customer['alias']}" if customer else None,
                                  "replyCustomerId": reply_id, "eventId": event, "message": text,
                                  "lastTextHash": text_hash, "conversation": row.get("context", []) if reply_id else []}
         action = background_action(pending, settings)
@@ -1520,29 +1582,26 @@ def build_group_plan(value):
     settings = read_settings()
     group = settings["group"]
     identifier = text_field(value.get("customerId", ""), 128, "客户编号", True)
-    customer = next((person for person in group["customers"] if person["id"] == identifier), None)
     revision = value.get("revision")
-    if not group["enabled"] or not customer or not customer["adviser"] or revision != automation_revision(settings):
+    if not group["enabled"] or not group["adviser"] or revision != automation_revision(settings):
         return {"plan": None}
-    with closing(database()) as connection:
-        if connection.execute("SELECT 1 FROM group_jobs WHERE customer_id=?", (identifier,)).fetchone():
-            return {"plan": None}
     message = text_field(value.get("message", ""), 2800, "客户消息", True)
     with BACKGROUND_LOCK:
-        active = BACKGROUND_INBOX["revision"]
-        eligible = bool(active and active[0] == revision and any(
+        if BACKGROUND_INBOX["revision"] != (revision, history_profile()):
+            return {"plan": None}
+        item = next((item for item in BACKGROUND_INBOX["pending"].values() if
             item.get("groupEligible") and item["groupCustomerId"] == identifier
             and item["eventId"] == value.get("eventId") and item["message"] == message
-            for item in BACKGROUND_INBOX["pending"].values()
-        ))
-    if not eligible:
-        return {"plan": None}
+        ), None)
+        if item is None:
+            return {"plan": None}
     receipt = secrets.token_hex(8)
-    base_name = " ".join(group["name"].replace("{客户}", customer["name"]).split())
+    base_name = " ".join(group["name"].replace("{客户}", item["groupCustomer"]["name"]).split())
     group_name = f"{base_name[:24]}-{receipt[:6]}"
     with closing(database()) as connection, connection:
         connection.execute("BEGIN IMMEDIATE")
-        if automation_revision(read_settings()) != revision:
+        if (AUTOMATION_PAUSED.is_set() or automation_revision(read_settings()) != revision
+                or existing_group_job(connection, identifier, item["formerGroupId"])):
             return {"plan": None}
         cursor = connection.execute(
             "INSERT INTO group_jobs VALUES (?, ?, ?, 'reserved') ON CONFLICT(customer_id) DO NOTHING",
@@ -1551,7 +1610,7 @@ def build_group_plan(value):
         if not cursor.rowcount:
             return {"plan": None}
     return {"plan": {"id": receipt, "groupName": group_name, "welcome": group["welcome"],
-                     "adviserId": customer["adviser"]["id"]}}
+                     "adviserId": group["adviser"]["id"]}}
 
 
 def finish_group_plan(value):
@@ -2467,7 +2526,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(group_runtime(param("resolve") == "1"))
             if method == "GET" and path == "/api/group-worker/background-message":
                 candidate = next_background_message(param("revision"))
-                return self.reply({key: value for key, value in candidate.items() if key != "conversation"} if candidate else None)
+                private_fields = {"conversation", "groupCustomer", "formerGroupId"}
+                return self.reply({key: value for key, value in candidate.items() if key not in private_fields} if candidate else None)
             if method == "POST" and path == "/api/group-worker/background-focus":
                 return self.reply(update_background_message(self.payload(), request_focus=True))
             if method == "POST" and path == "/api/group-worker/background-ack":
