@@ -97,7 +97,19 @@ class DownloadRedirect(urllib.request.HTTPRedirectHandler):
         return redirected
 
 
-def github_request(path, accept, size_limit, download=False):
+def read_download(response, size_limit, on_download):
+    data = bytearray()
+    while len(data) <= size_limit:
+        chunk = response.read(min(16 * 1024, size_limit + 1 - len(data)))
+        if not chunk:
+            return bytes(data)
+        data.extend(chunk)
+        if len(data) <= size_limit:
+            on_download(len(data), size_limit)
+    raise UpdateError("GitHub 返回的文件大于允许的更新包大小。")
+
+
+def github_request(path, accept, size_limit, download=False, *, on_download=None):
     headers = {"Accept": accept, "User-Agent": "WeChatAssistant-Update"}
     if token := os.environ.get("WECHAT_UPDATE_GITHUB_TOKEN"):
         headers["Authorization"] = "Bearer " + token
@@ -105,6 +117,8 @@ def github_request(path, accept, size_limit, download=False):
     try:
         redirect = DownloadRedirect() if download else NoRedirect()
         with urllib.request.build_opener(redirect).open(request, timeout=15) as response:
+            if on_download is not None:
+                return read_download(response, size_limit, on_download)
             data = response.read(size_limit + 1)
             if len(data) > size_limit:
                 raise UpdateError("GitHub 返回的文件大于允许的更新包大小。")
@@ -160,12 +174,20 @@ def unpack_release(raw, expected_version):
         raise UpdateError("更新包解包或语法检查失败。") from error
 
 
-def stage_update(home, repository, release):
+def stage_update(home, repository, release, *, progress=None):
     path = f"/repos/{repository}/releases/assets/{release['asset']}"
-    raw = github_request(path, "application/octet-stream", release["size"], download=True)
+    on_download = None
+    if progress is not None:
+        progress("downloading", 0, release["size"])
+        on_download = lambda received, total: progress("downloading", received, total)
+    raw = github_request(path, "application/octet-stream", release["size"], download=True, on_download=on_download)
+    if progress is not None:
+        progress("verifying")
     if len(raw) != release["size"] or hashlib.sha256(raw).hexdigest() != release["sha256"]:
         raise UpdateError("下载文件与 GitHub 提供的校验信息不一致。")
     files = unpack_release(raw, release["version"])
+    if progress is not None:
+        progress("preparing")
     base = update_dir(home)
     releases = base / "releases"
     releases.mkdir(parents=True, exist_ok=True)

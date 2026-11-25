@@ -2357,6 +2357,7 @@ def check_for_update(force=False):
 class WorkbenchServer(ThreadingHTTPServer):
     daemon_threads = False
     update_requested = False
+    update_progress = {"stage": "idle"}
 
     def get_request(self):
         client, address = super().get_request()
@@ -2418,23 +2419,32 @@ class Handler(BaseHTTPRequestHandler):
                 raise AppError("正在重新启动，马上会切换到新版。", 409)
             try:
                 expected = release_update.version(self.payload().get("version"))
+
+                def report_progress(stage, received=0, total=0):
+                    self.server.update_progress = {"stage": stage, "version": expected,
+                                                   "received": received, "total": total}
+
+                report_progress("checking")
                 repository = release_update.configured_repository(APP_HOME)
                 if not repository:
                     raise AppError("维护者还没有设置 GitHub 发布仓库。", 409)
                 release = latest_update(repository, force=True)
                 if not release or release["version"] != expected:
                     raise AppError("最新版本已变动，请重新检查更新。", 409)
-                release_update.stage_update(APP_HOME, repository, release)
+                release_update.stage_update(APP_HOME, repository, release, progress=report_progress)
             except release_update.UpdateError as error:
                 raise AppError(str(error), 502) from error
             except OSError as error:
                 raise AppError("无法写入更新文件，请检查工作台目录的写入权限。", 500) from error
             self.server.update_requested = True
+            report_progress("restarting")
             try:
                 self.reply({"state": "restarting", "version": expected}, 202)
             finally:
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
         finally:
+            if not self.server.update_requested:
+                self.server.update_progress = {"stage": "idle"}
             UPDATE_INSTALL_LOCK.release()
 
     def route(self, method, path, query):
@@ -2488,6 +2498,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(read_automation_status())
             if path == "/api/update/status":
                 return self.reply(update_status())
+            if path == "/api/update/progress":
+                return self.reply(self.server.update_progress)
             if path == "/api/update":
                 return self.reply(check_for_update(param("force") == "1"))
             if path == "/api/settings":

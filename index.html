@@ -164,6 +164,7 @@ main { min-width:0; width:100%; max-width:104rem; padding:var(--space-3) var(--s
 .update-dialog::backdrop { background:var(--drawer-shade) }
 .update-dialog form { display:grid; gap:var(--space-3) }
 .update-dialog p:empty { display:none }
+.update-dialog progress { display:block; width:100%; accent-color:var(--accent) }
 .release-notes { white-space:pre-wrap; overflow-wrap:anywhere }
 .card { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius-3); min-width:0; overflow:hidden }
 .card-head { padding:var(--space-4); display:flex; gap:var(--space-3); justify-content:space-between; align-items:start; flex-wrap:wrap }
@@ -392,6 +393,7 @@ legend { margin-bottom:var(--space-2) }
         <p id="latest-version" hidden></p>
         <p class="small" id="update-check-info" role="status">正在检查更新</p>
         <p class="release-notes" id="update-notes" hidden></p>
+        <progress id="update-download-bar" max="100" aria-label="更新包下载进度" hidden></progress>
         <p class="small" id="update-progress" role="status" hidden></p>
         <div class="form-actions">
           <button type="button" class="btn primary" id="install-update" hidden>下载并更新</button>
@@ -977,14 +979,17 @@ $("install-update").addEventListener("click",() => {
   const target = availableUpdate.version;
   pending($("install-update"),"正在更新",async () => {
     updateRunning = true;
-    showUpdateProgress("正在下载并校验新版");
+    showUpdateTransfer("正在连接更新服务器");
+    const stopWatching = watchUpdateTransfer(target);
     try {
       await jsonRequest("/api/update/install","POST",{version:target});
-      showUpdateProgress("新版已下载，正在重启工作台");
+      stopWatching();
+      showUpdateTransfer("新版已下载，正在重启工作台",100);
       await waitForUpdate(target);
     } catch(error) {
       showUpdateProgress(error.message,true);
     } finally {
+      stopWatching();
       updateRunning = false;
     }
   });
@@ -992,6 +997,34 @@ $("install-update").addEventListener("click",() => {
 function showUpdateProgress(message, isError = false) {
   note("update-progress",message,isError);
   $("update-progress").hidden = !message;
+  if (isError || !updateRunning) $("update-download-bar").hidden = true;
+}
+function showUpdateTransfer(message, percentage) {
+  showUpdateProgress(message);
+  const bar = $("update-download-bar");
+  bar.hidden = false;
+  if (percentage === undefined) bar.removeAttribute("value");
+  else bar.value = percentage;
+}
+function watchUpdateTransfer(target) {
+  let active = true;
+  let timer;
+  async function poll() {
+    try {
+      const state = await request("/api/update/progress");
+      if (active && state.version === target) {
+        if (state.stage === "downloading" && state.total > 0) {
+          const percentage = Math.floor(Math.min(state.received,state.total) / state.total * 100);
+          showUpdateTransfer("正在下载更新包 " + percentage + "%",percentage);
+        } else if (state.stage === "verifying") showUpdateTransfer("正在校验更新包",100);
+        else if (state.stage === "preparing") showUpdateTransfer("正在准备安装",100);
+        else if (state.stage === "restarting") showUpdateTransfer("正在重启工作台",100);
+      }
+    } catch { /* The server may be restarting. */ }
+    if (active) timer = setTimeout(poll,250);
+  }
+  void poll();
+  return () => { active = false; clearTimeout(timer); };
 }
 function paintVersionControl() {
   const current = installedVersion ? "当前版本 v" + installedVersion : "读取当前版本";
