@@ -1044,7 +1044,7 @@ index b19c083..9fb534c 100644
  			}
  			RandomWait.Wait(300, 1200);
 diff --git a/WeChatAuto4_X/WeChatAuto/Components/WeChatClientFactory.cs b/WeChatAuto4_X/WeChatAuto/Components/WeChatClientFactory.cs
-index 339e0ac..1c457c1 100644
+index 339e0ac..303deb7 100644
 --- a/WeChatAuto4_X/WeChatAuto/Components/WeChatClientFactory.cs
 +++ b/WeChatAuto4_X/WeChatAuto/Components/WeChatClientFactory.cs
 @@ -14,6 +14,7 @@ using WeAutoCommon.Models;
@@ -1076,24 +1076,20 @@ index 339e0ac..1c457c1 100644
          /// <summary>
          /// 获取微信客户端列表
          /// 微信客户端请参见<see cref="WeChatClient"/>
-@@ -466,8 +481,13 @@ namespace WeChatAuto.Components
+@@ -466,38 +481,46 @@ namespace WeChatAuto.Components
          {
              try
              {
 -                var desktop = automation.GetDesktop();
 -                var windowRetry = Retry.WhileNull(() => desktop.FindFirstChild(cf => cf.ByControlType(ControlType.Window).And(cf.ByClassName("mmui::MainWindow")).And(cf.ByProcessId(processID))),
 +                using var process = System.Diagnostics.Process.GetProcessById(processID);
-+                var mainHandle = process.MainWindowHandle;
-+                if (mainHandle == IntPtr.Zero)
-+                    mainHandle = WeChatAction.FindMainHwnd(processID);
-+                if (mainHandle == IntPtr.Zero)
-+                    throw new InvalidOperationException("WeChat window not found.");
-+                var windowRetry = Retry.WhileNull(() => automation.FromHandle(mainHandle),
++                var windowRetry = Retry.WhileNull(() => WeChatAction.FindSignedInWindow(automation, processID, process.MainWindowHandle),
                                       timeout: TimeSpan.FromSeconds(5),
                                       interval: TimeSpan.FromMilliseconds(200));
                  if (windowRetry.Success)
-@@ -475,29 +495,36 @@ namespace WeChatAuto.Components
+                 {
                      var wxTempwindow = windowRetry.Result.AsWindow();
++                    var mainHandle = wxTempwindow.Properties.NativeWindowHandle.Value;
                      RandomWait.Wait(300, 600);
                      OwerInfo info = new OwerInfo();
 +                    SupperMouseKey.CheckDesktopInput();
@@ -1140,7 +1136,7 @@ index 339e0ac..1c457c1 100644
                              if (wxid != null)
                              {
                                  wxid.DrawHighlightExt();
-@@ -516,6 +543,8 @@ namespace WeChatAuto.Components
+@@ -516,6 +539,8 @@ namespace WeChatAuto.Components
                                      info.AvatorPath = avatorPath;
                                  }
                              }
@@ -1149,7 +1145,7 @@ index 339e0ac..1c457c1 100644
                              RandomWait.Wait(50, 600);
                          }
                      }
-@@ -574,4 +603,4 @@ namespace WeChatAuto.Components
+@@ -574,4 +599,4 @@ namespace WeChatAuto.Components
              }
          }
      }
@@ -1399,19 +1395,20 @@ index dfbe4c2..da6ac26 100644
          public static string MessagePopupMenu_Copy = "/Window[@Name='Weixin']/MenuItem[@Name='复制'][@ClassName='mmui::XMenuView'] | /Window[@Name='Weixin']/MenuItem[@Name='复制'][@ClassName='mmui::XMenu']";
          //消息列表弹出的下载菜单xpath
 diff --git a/WeChatAuto4_X/WeChatAuto/Utils/WeChatAction.cs b/WeChatAuto4_X/WeChatAuto/Utils/WeChatAction.cs
-index 18037ed..7a9a592 100644
+index 18037ed..26de8f0 100644
 --- a/WeChatAuto4_X/WeChatAuto/Utils/WeChatAction.cs
 +++ b/WeChatAuto4_X/WeChatAuto/Utils/WeChatAction.cs
-@@ -7,6 +7,8 @@ using System.Runtime.InteropServices;
+@@ -7,6 +7,9 @@ using System.Runtime.InteropServices;
  using System.Text;
  using System.Threading;
  using Microsoft.Win32.SafeHandles;
 +using FlaUI.Core.AutomationElements;
 +using FlaUI.Core.Definitions;
++using FlaUI.UIA3;
  
  namespace WeChatAuto.Utils
  {
-@@ -274,7 +276,7 @@ namespace WeChatAuto.Utils
+@@ -274,7 +277,7 @@ namespace WeChatAuto.Utils
          }
  
          /// <summary>
@@ -1420,7 +1417,7 @@ index 18037ed..7a9a592 100644
          /// 关窗后 Vis=False 仍在；绝不要选 WxTrayIconMessageWindow。
          /// </summary>
          public static IntPtr FindMainHwnd(int pid)
-@@ -283,7 +285,7 @@ namespace WeChatAuto.Utils
+@@ -283,7 +286,7 @@ namespace WeChatAuto.Utils
  
              var main = wins.FirstOrDefault(w =>
                  w.Class.IndexOf("QWindowIcon", StringComparison.OrdinalIgnoreCase) >= 0
@@ -1429,7 +1426,7 @@ index 18037ed..7a9a592 100644
                  && w.Class.IndexOf("WxTrayIcon", StringComparison.OrdinalIgnoreCase) < 0);
  
              if (main.Hwnd != IntPtr.Zero) return main.Hwnd;
-@@ -295,6 +297,29 @@ namespace WeChatAuto.Utils
+@@ -295,6 +298,58 @@ namespace WeChatAuto.Utils
              return main.Hwnd;
          }
  
@@ -1438,6 +1435,35 @@ index 18037ed..7a9a592 100644
 +            window?.FindFirstDescendant(cf => cf.ByControlType(ControlType.ToolBar)
 +                .And(cf.ByAutomationId("MainView.main_tabbar").Or(cf.ByName("导航"))
 +                    .Or(cf.ByName("導覽")).Or(cf.ByName("導航")).Or(cf.ByName("Navigation"))));
++
++        /// <summary>Finds a verified signed-in main window without changing its visibility or focus.</summary>
++        public static AutomationElement FindSignedInWindow(UIA3Automation automation, int processId, IntPtr preferred)
++        {
++            AutomationElement Check(IntPtr handle)
++            {
++                if (handle == IntPtr.Zero || !IsWindow(handle))
++                    return null;
++                try
++                {
++                    var window = automation.FromHandle(handle);
++                    if (window?.Properties.ProcessId.ValueOrDefault != processId)
++                        return null;
++                    var navigation = FindNavigationBar(window);
++                    if (navigation?.Properties.AutomationId.ValueOrDefault == "MainView.main_tabbar" ||
++                        FindChatsTab(navigation) != null)
++                        return window;
++                }
++                catch (COMException) { }
++                catch (InvalidOperationException) { }
++                return null;
++            }
++
++            return Check(preferred) ?? ListWindows(processId)
++                .Where(window => window.Hwnd != preferred &&
++                    !window.Class.Contains("WxTrayIcon", StringComparison.OrdinalIgnoreCase))
++                .Select(window => Check(window.Hwnd))
++                .FirstOrDefault(window => window != null);
++        }
 +
 +        internal static AutomationElement FindChatsTab(AutomationElement navigation) =>
 +            navigation?.FindFirstChild(cf => cf.ByControlType(ControlType.Button)
@@ -1459,7 +1485,7 @@ index 18037ed..7a9a592 100644
          /// <summary>找托盘消息窗（调试用；不要 Close 它）。</summary>
          public static IntPtr FindTrayMsgHwnd(int pid)
          {
-@@ -660,4 +685,4 @@ namespace WeChatAuto.Utils
+@@ -660,4 +715,4 @@ namespace WeChatAuto.Utils
  
          #endregion
      }

@@ -27,7 +27,7 @@ try
     {
         using var session = BridgeSession.Open();
         Console.WriteLine("WECHAT_RESULT " + JsonSerializer.Serialize(new
-        { name = session.Client.NickName, alias = session.Client.Alias }));
+        { name = session.Client.NickName, alias = session.Client.Alias, processId = session.Client.MainWindow.Properties.ProcessId.Value }));
         return 0;
     }
     if (args is ["--tag-directory"])
@@ -43,8 +43,12 @@ try
             await session.SearchContacts(args.Length == 2 ? args[1] : null)));
         return 0;
     }
-    var windows = WeChatWindows.CountLoggedIn();
-    Console.WriteLine("WECHAT_RESULT " + JsonSerializer.Serialize(new { windows }));
+    var processes = WeChatWindows.LoggedInProcesses();
+    Console.WriteLine("WECHAT_RESULT " + JsonSerializer.Serialize(new
+    {
+        windows = processes.Length,
+        processId = processes.Length == 1 ? (int?)processes[0] : null
+    }));
     return 0;
 }
 catch (Exception error)
@@ -72,6 +76,9 @@ internal static class WeChatWindows
 
     [DllImport("user32.dll")]
     private static extern bool IsIconic(IntPtr window);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr window);
 
     [DllImport("user32.dll")]
     private static extern bool ShowWindowAsync(IntPtr window, int command);
@@ -172,48 +179,52 @@ internal static class WeChatWindows
         try
         {
             using var process = Process.GetProcessById(processId);
-            var handle = process.MainWindowHandle;
-            if (handle == IntPtr.Zero || !IsClientName(process.ProcessName))
+            if (!IsClientName(process.ProcessName))
                 return false;
-            if (IsIconic(handle))
+            using var automation = new UIA3Automation();
+            var window = WeChatAction.FindSignedInWindow(automation, processId, process.MainWindowHandle)?.AsWindow();
+            if (window is null)
+                return false;
+            var handle = window.Properties.NativeWindowHandle.Value;
+            if (IsIconic(handle) || !IsWindowVisible(handle))
             {
                 const int restoreWindow = 9;
                 ShowWindowAsync(handle, restoreWindow);
             }
             SetForegroundWindow(handle);
             if (IsForeground(processId)) return true;
-            using var automation = new UIA3Automation();
-            Focus(automation.FromHandle(handle).AsWindow());
+            Focus(window);
             return IsForeground(processId);
         }
         catch (Exception) { return false; }
     }
 
-    internal static int CountLoggedIn()
-    {
-        using var automation = new UIA3Automation();
-        return FindLoggedIn(automation).Count();
-    }
+    internal static int CountLoggedIn() => LoggedInProcesses().Length;
 
     internal static int? LoggedInProcess()
     {
-        using var automation = new UIA3Automation();
-        var windows = FindLoggedIn(automation).Take(2).ToArray();
-        return windows.Length == 1 ? windows[0].Properties.ProcessId.Value : null;
+        var processes = LoggedInProcesses();
+        return processes.Length == 1 ? processes[0] : null;
     }
 
-    private static IEnumerable<AutomationElement> FindLoggedIn(UIA3Automation automation)
+    internal static int[] LoggedInProcesses()
     {
+        using var automation = new UIA3Automation();
+        var processes = new List<int>();
         foreach (var process in ClientProcesses())
         {
             using (process)
             {
-                var handle = process.MainWindowHandle;
-                if (handle == IntPtr.Zero) continue;
-                var window = automation.FromHandle(handle);
-                if (WeChatAction.FindNavigationBar(window) is not null) yield return window;
+                try
+                {
+                    if (WeChatAction.FindSignedInWindow(automation, process.Id, process.MainWindowHandle) is not null)
+                        processes.Add(process.Id);
+                }
+                catch (InvalidOperationException) { }
+                catch (System.ComponentModel.Win32Exception) { }
             }
         }
+        return processes.ToArray();
     }
 }
 

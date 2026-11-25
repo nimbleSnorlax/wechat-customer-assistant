@@ -17,7 +17,7 @@ from pathlib import Path
 
 EXIT_TO_UPDATE = 75
 FILES = ("server.py", "style_history.py", "index.html", "release_update.py", "app_version.txt")
-BRIDGE_VERSION = "0.1.42"
+BRIDGE_VERSION = "0.1.43"
 BRIDGE_FILES = ("WeChatBridge.dll", "WeChatAuto.dll", "WeAutoCommon.dll")
 BRIDGE_MARKER = "bridge-version.txt"
 VERSION_PATTERN = re.compile(r"v?((?:0|[1-9][0-9]{0,5})\.(?:0|[1-9][0-9]{0,5})\.(?:0|[1-9][0-9]{0,5}))")

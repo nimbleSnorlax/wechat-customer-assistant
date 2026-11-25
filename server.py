@@ -70,7 +70,7 @@ HISTORY_SOURCE_LOCK = threading.Lock()
 HISTORY_SOURCE_CACHE = (None, 0.0, {})
 STATUS_LOCK = threading.Lock()
 STATUS_CACHE = (0.0, {})
-SDK_ACCOUNT_NAME = ""
+SDK_ACCOUNT = (None, "")
 AUTOMATION_LOCK = threading.Lock()
 AUTOMATION_STATUS = {}
 AUTOMATION_HEARTBEAT_SECONDS = 30
@@ -843,17 +843,18 @@ def history_profile():
 
 
 def read_account(force=False):
-    global STATUS_CACHE, SDK_ACCOUNT_NAME
+    global STATUS_CACHE, SDK_ACCOUNT
     with STATUS_LOCK:
         now = time.monotonic()
         if not force and now - STATUS_CACHE[0] < 8:
             return STATUS_CACHE[1]
         source = "unknown"
         names = []
-        window_count = 0
+        window_count, process_id = 0, None
         if SDK.is_file() and DOTNET.is_file():
             try:
-                window_count = sdk_response((), 9).get("windows", 0)
+                detected = sdk_response((), 9)
+                window_count, process_id = detected.get("windows", 0), detected.get("processId")
             except (OSError, ValueError, subprocess.TimeoutExpired):
                 pass
         local_source = history_source()
@@ -861,11 +862,12 @@ def read_account(force=False):
         if window_count == 1 and profile:
             names = [local_source["name"]]
             source = "client"
-        if window_count != 1:
-            SDK_ACCOUNT_NAME = ""
-        elif SDK_ACCOUNT_NAME:
-            names, source = [SDK_ACCOUNT_NAME], "sdk"
+        if window_count != 1 or SDK_ACCOUNT[0] != process_id:
+            SDK_ACCOUNT = (None, "")
+        elif SDK_ACCOUNT[1]:
+            names, source = [SDK_ACCOUNT[1]], "sdk"
         result = {"source": source, "accounts": names, "profile": profile, "windows": window_count,
+                  "processId": process_id,
                   "historyAvailable": CLI.is_file() and bool(local_source.get("historyAvailable"))}
         STATUS_CACHE = (time.monotonic(), result)
         return result
@@ -886,15 +888,21 @@ def open_wechat_for_setup():
 
 
 def identify_setup_account():
-    global STATUS_CACHE, SDK_ACCOUNT_NAME
+    global STATUS_CACHE, SDK_ACCOUNT
     status = account_status(force=True)
     if status["windows"] != 1 or status["accounts"]:
         return status
     person = run_sdk_directory(("--account",), 26)
     name = text_field(person.get("name", ""), 160, "当前微信昵称", True)
+    process_id = status["processId"]
+    if process_id is not None and person.get("processId") != process_id:
+        raise AppError("识别期间微信窗口已变化，请重新识别。", 409)
     with STATUS_LOCK:
-        SDK_ACCOUNT_NAME = name
-        STATUS_CACHE = (time.monotonic(), STATUS_CACHE[1] | {"accounts": [name], "source": "sdk"})
+        current = STATUS_CACHE[1]
+        if current["windows"] != 1 or current["processId"] != process_id:
+            raise AppError("识别期间微信窗口已变化，请重新识别。", 409)
+        SDK_ACCOUNT = (process_id, name)
+        STATUS_CACHE = (time.monotonic(), current | {"accounts": [name], "source": "sdk"})
     return status | {"accounts": [name], "source": "sdk"}
 
 
