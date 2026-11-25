@@ -1114,7 +1114,10 @@ def model_reply(config, message, refs, preview, *, conversation=()):
     output = "先写一行“来意：”，再写“回复：”和可以发送的简短正文。" if preview else "只输出可直接发给客户的简短回复正文。"
     tone_prompt = ""
     if config.get("mimicTone", True):
-        tone_prompt = f"回复语气：{config['tone']}。历史表达偏好：{config['historyProfile'] or '无'}。这些偏好仅用于措辞。"
+        if profile := config["historyProfile"].strip():
+            tone_prompt = f"历史表达偏好：{profile}。这些偏好仅用于措辞。"
+    else:
+        tone_prompt = f"回复语气：{config['tone']}。这个偏好仅用于措辞。"
     context = {"客户原话": message, "参考资料": [{"文件": row["name"], "内容": row["text"]} for row in refs]}
     if conversation:
         context["同一私聊之前的对话"] = [
@@ -1855,7 +1858,7 @@ def stored_reply(connection):
     return json.loads(row["value"]) if row else {}
 
 
-def save_history_tone(tone, base_tone=None, mimic_tone=None):
+def save_history_tone(tone=None, base_tone=None, mimic_tone=None):
     with closing(database()) as connection, connection:
         connection.execute("BEGIN IMMEDIATE")
         settings = stored_reply(connection)
@@ -1863,6 +1866,8 @@ def save_history_tone(tone, base_tone=None, mimic_tone=None):
             settings["tone"] = base_tone
         if mimic_tone is not None:
             settings["mimicTone"] = mimic_tone
+        if tone is None:
+            tone = settings.get("historyProfile", "")
         store_history_tone(connection, settings, tone)
     return {"tone": tone, "baseTone": settings.get("tone", DEFAULTS["reply"]["tone"]),
             "mimicTone": settings.get("mimicTone", DEFAULTS["reply"]["mimicTone"])}
@@ -2542,7 +2547,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(restore_history_library())
         if method == "PUT" and path == "/api/history-tone":
             value = self.payload()
-            tone = text_field(value.get("tone"), 1200, "历史表达习惯")
+            tone = text_field(value["tone"], 1200, "历史表达习惯") if "tone" in value else None
             base_tone = text_field(value["baseTone"], 36, "基础语气", True) if "baseTone" in value else None
             if "mimicTone" in value and type(value["mimicTone"]) is not bool:
                 raise AppError("请选择是否模仿回复语气。")

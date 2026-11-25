@@ -371,6 +371,10 @@ legend { margin-bottom:var(--space-2) }
         </details>
       </div>
       <p class="small automation-feedback" id="automation-feedback" role="status"></p>
+      <div class="update-strip" id="installed-update-notice" hidden>
+        <strong id="installed-update-text" role="status"></strong>
+        <button type="button" class="btn sm" id="dismiss-installed-update" aria-label="关闭更新完成提示">关闭</button>
+      </div>
       <div class="update-strip" id="history-notice" hidden>
         <span class="history-spinner" id="history-notice-spinner" aria-hidden="true" hidden></span>
         <strong id="history-notice-text" role="status"></strong>
@@ -692,16 +696,16 @@ legend { margin-bottom:var(--space-2) }
         <div class="panel-body knowledge-narrow" id="knowledge-tone-panel" role="tabpanel" aria-labelledby="knowledge-tone-tab" hidden>
           <form class="tone-fields" id="learned-tone-form">
             <div class="field">
-              <label class="choice"><input type="checkbox" id="mimic-tone" aria-describedby="mimic-tone-hint">模仿我的回复语气</label>
-              <small id="mimic-tone-hint">开启后，AI 回复会参考下方的语气。</small>
+              <label class="choice"><input type="checkbox" id="mimic-tone" aria-describedby="mimic-tone-hint" checked>模仿我的回复语气</label>
+              <small id="mimic-tone-hint">AI 会参考历史表达习惯，留空时使用默认语气。</small>
             </div>
-            <fieldset><legend>常用语气</legend><div class="inline" id="tone-options">
+            <fieldset id="base-tone-options" hidden><legend>常用语气</legend><div class="inline" id="tone-options">
               <button type="button" class="btn" data-tone="亲切专业" aria-pressed="true">亲切专业</button>
               <button type="button" class="btn" data-tone="简洁直接" aria-pressed="false">简洁直接</button>
               <button type="button" class="btn" data-tone="正式稳重" aria-pressed="false">正式稳重</button>
             </div></fieldset>
-            <div class="field"><label for="tone">基础语气</label><input class="input" id="tone" maxlength="36" required></div>
-            <div class="field"><label for="learned-tone">历史表达习惯</label><textarea id="learned-tone" rows="6" maxlength="1200" placeholder="整理历史后会填入这里，也可以直接填写。"></textarea></div>
+            <div class="field" id="base-tone-field" hidden><label for="tone">基础语气</label><input class="input" id="tone" maxlength="36" required disabled></div>
+            <div class="field" id="learned-tone-field"><label for="learned-tone">历史表达习惯</label><textarea id="learned-tone" rows="6" maxlength="1200" placeholder="整理历史后会填入这里，也可以直接填写。"></textarea></div>
             <div class="form-actions"><button class="btn primary" type="submit" id="save-learned-tone" disabled>保存语气</button><span class="local-status small" id="learned-tone-feedback" role="status"></span></div>
           </form>
           <details class="analysis-panel" id="history-style">
@@ -1010,8 +1014,19 @@ async function loadInstalledVersion() {
       installedVersion = status.current;
       paintVersionControl();
     }
+    showInstalledUpdateNotice(status);
   } catch { /* The update check can also supply the installed version. */ }
 }
+function showInstalledUpdateNotice(status) {
+  const version = status.result?.state === "installed" && status.result.version === status.current ? status.current : "";
+  if (!version || sessionStorage.getItem("dismissed-installed-update") === version) return;
+  note("installed-update-text", "已更新到 v" + version);
+  $("installed-update-notice").hidden = false;
+}
+$("dismiss-installed-update").addEventListener("click", () => {
+  sessionStorage.setItem("dismissed-installed-update",installedVersion);
+  $("installed-update-notice").hidden = true;
+});
 async function checkUpdate(manual = false) {
   if (updateRunning) return;
   const ticket = ++updateCheckId;
@@ -1024,6 +1039,7 @@ async function checkUpdate(manual = false) {
     availableUpdate = update ? status : null;
     versionCheckState = status.state;
     paintVersionControl();
+    showInstalledUpdateNotice(status);
     $("install-update").hidden = !update;
     $("install-update").disabled = update && !status.canInstall;
     note("update-notes",update ? status.notes || "" : "");
@@ -1472,6 +1488,16 @@ $("style-retry").addEventListener("click",loadStyleConversations);
 function renderTone() {
   document.querySelectorAll("[data-tone]").forEach(button => button.setAttribute("aria-pressed",String(button.dataset.tone === $("tone").value)));
 }
+function renderToneMode() {
+  const mimic = $("mimic-tone").checked;
+  $("base-tone-options").hidden = mimic;
+  $("base-tone-field").hidden = mimic;
+  $("tone").disabled = mimic;
+  $("learned-tone-field").hidden = !mimic;
+  $("history-style").hidden = !mimic;
+  note("mimic-tone-hint", mimic ? "AI 会参考历史表达习惯，留空时使用默认语气。" : "AI 会使用下方的基础语气。");
+}
+$("mimic-tone").addEventListener("change",renderToneMode);
 document.querySelectorAll("[data-tone]").forEach(button => button.addEventListener("click",() => {
   $("tone").value = button.dataset.tone;
   renderTone();
@@ -1996,13 +2022,14 @@ async function refreshHistoryLearning() {
     savedLearnedTone = data.tone;
     if (savedMimicTone === null || $("mimic-tone").checked === savedMimicTone) $("mimic-tone").checked = data.mimicTone;
     savedMimicTone = data.mimicTone;
+    renderToneMode();
     $("save-learned-tone").disabled = false;
     $("restore-history").hidden = running || !data.canRestore;
     $("setup-history-results").hidden = !data.canRestore;
     if (!running) historyStopping = false;
     const counts = `已读取 ${job.read || 0} 条文字，已分析 ${job.replies || 0} 条本人消息，整理出 ${job.cards || 0} 张卡片。`;
     const messages = {
-      idle: !data.ready ? "请先在「回复设置」中启用 AI 模式并保存模型。"
+      idle: !data.ready ? "请先在「AI 配置」中保存模型，再在「回复设置」中选择 AI 生成。"
         : !data.historyAvailable ? "请先配置本机微信历史读取。" : "",
       running: "",
       done: "整理完成。" + counts + (job.toneSaved ? "语气和卡片已切换到新版本。" : ""),
@@ -2130,15 +2157,16 @@ $("learned-tone-form").addEventListener("submit", event => {
   const mimicTone = $("mimic-tone").checked;
   pending($("save-learned-tone"), "正在保存", async () => {
     try {
-      const updated = await jsonRequest("/api/history-tone", "PUT", {tone,baseTone,mimicTone});
+      const fields = mimicTone ? {tone,mimicTone} : {baseTone,mimicTone};
+      const updated = await jsonRequest("/api/history-tone", "PUT", fields);
       historyStatusRevision++;
       savedBaseTone = updated.baseTone;
       savedLearnedTone = updated.tone;
       savedMimicTone = updated.mimicTone;
       $("setup-mimic").checked = savedMimicTone;
-      if ($("tone").value === baseTone) $("tone").value = updated.baseTone;
+      if (!mimicTone && $("tone").value === baseTone) $("tone").value = updated.baseTone;
       renderTone();
-      if ($("learned-tone").value === tone) $("learned-tone").value = updated.tone;
+      if (mimicTone && $("learned-tone").value === tone) $("learned-tone").value = updated.tone;
       note("learned-tone-feedback", "语气已保存。");
     } catch (error) { note("learned-tone-feedback", error.message, true); }
   });

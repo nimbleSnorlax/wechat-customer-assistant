@@ -11,7 +11,7 @@
 - **运行记录**显示助手自动发送成功的回复和建群成功的结果。历史消息在语气分析时按需读取。
 - **AI 配置**单独保存模型接口地址、模型名称和 AI Key。兼容 OpenAI 对话接口的模型通常使用以 `/v1` 结尾的地址。AI Key 按当前 Windows 用户加密保存在本机。
 - **回复设置**可设置固定话术、适用联系人或标签，以及 AI 回复的上下文条数和补充要求。AI 试写会将示例消息与匹配的资料片段发给配置的模型。
-- **回复语气**在「知识库」里统一保存语气模仿开关、基础语气和历史表达习惯。可展开「从指定会话分析语气」，选择会话和时间范围。使用模型分析时，每个会话最多提交 5 条本人回复的短样本。可将建议填入编辑框，检查后点「保存语气」。
+- **回复语气**位于「知识库」。开启模仿时使用历史表达习惯，关闭时使用手动保存的基础语气。可展开「从指定会话分析语气」，选择会话和时间范围。使用模型分析时，每个会话最多提交 5 条本人回复的短样本。可将建议填入编辑框，检查后点「保存语气」。
 - **建群设置**为每位触发客户指定一位对接人，编辑 AI 触发条件、群名模板和群内欢迎语。每个群由当前微信发起，只包含当前微信、该客户和他对应的对接人。默认关闭。先配置模型，点「测试判断」可只验证 AI 判断和话术。开启后只处理选定客户的可确认新文字，验明三位群成员后发送欢迎语。旧配置只有一位顾问时，为原有客户沿用这位顾问。旧配置有多位顾问时，先给各客户分别指定，再开启。
 - **知识库**可以上传 TXT、Markdown、CSV、DOCX、PDF，每份最多 8 MB。上传扫描版 PDF 前，先转换成可复制的文字。
 - **从微信历史整理**在「知识库」中运行。先保存并启用 AI 回复模式，再点「整理全部文字历史」。程序通过现有只读来源分批读取当前账号在本机可读的文字聊天，提交遮盖了常见号码、邮箱和链接的文本给已配置的模型。工作台把语气总结和可复用的知识卡片存入本机数据库，可分别修改。开启模拟语气时，AI 回复会参考语气总结。知识卡片可编辑或停用，启用后按触发词或相关性匹配。后续可点「一键重新整理」，成功后切换到新版语气和卡片，需要时点「恢复上一版」。整理在工作台后台运行，结束时发送本机通知，工作台也会保留结果提示。
@@ -37,7 +37,7 @@ git -C WeChatAuto.SDK apply ../patches/WeChatAuto.SDK.patch
 git clone https://github.com/maomao3334/wechat-cli-plus.git .thirdparty/wechat-cli-plus
 git -C .thirdparty/wechat-cli-plus checkout --detach 75a322dd09c7c498536d10ff6935c5d52fd5fd2b
 python -m pip install --target .python pypdf==6.21.4
-pwsh -File Build-Setup.ps1 -Repository nimbleSnorlax/wechat-customer-assistant -ReaderSource .thirdparty/wechat-cli-plus -Version 0.1.35
+pwsh -File Build-Setup.ps1 -Repository nimbleSnorlax/wechat-customer-assistant -ReaderSource .thirdparty/wechat-cli-plus
 ```
 
 工作台代码位于 `server.py`、`index.html`、`installer` 和 `sdk-bridge`。微信界面操作使用 SDK，后台接收和历史整理使用安装电脑已有的只读来源配置。历史查询工具路径可通过 `WECHAT_CLI_PATH` 和 `WECHAT_CLI_CONFIG` 指定。SDK 补丁的许可见 [上游 MIT 许可](patches/WeChatAuto.SDK.LICENSE.txt)。
@@ -45,7 +45,7 @@ pwsh -File Build-Setup.ps1 -Repository nimbleSnorlax/wechat-customer-assistant -
 ## 通过 GitHub 更新工作台
 
 1. 完整安装包通过 `Build-Setup.ps1 -Repository 所有者/仓库名` 指定公开更新源。安装包名为 `WeChatAssistant-<版本>-Setup-x64.exe`。
-2. 用 `pwsh -File Build-Update.ps1 -Version 0.1.35` 生成工作台更新包 `WeChatAssistant-0.1.35-update.zip`。
+2. 用 `pwsh -File Build-Update.ps1 -Version (Get-Content app_version.txt)` 生成对应版本的工作台更新包。
 3. 把安装包和更新包上传到对应标签的 GitHub 正式发行版。工作台会自动检查，发现新版后可点击「下载并更新」。公开发行版可直接下载。
 
 更新包包含工作台代码。用户配置、知识库和本机运行依赖位于安装目录的独立文件夹里。若新版启动失败，启动程序会回到更新前的版本。安装后直接通过微信 SDK 选择联系人。后台接收和历史语气分析使用安装电脑上对应微信账号的只读来源配置。
