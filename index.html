@@ -196,7 +196,6 @@ main > [data-panel] { display:grid; grid-template-columns:minmax(0,1fr); min-wid
 .history-card-editor > summary::before { content:""; width:.42rem; height:.42rem; border-block-start:1px solid; border-inline-end:1px solid; color:var(--muted); transform:rotate(45deg) }
 .history-card-editor[open] > summary::before { transform:rotate(135deg) }
 .card-title-cell { min-width:0; font-weight:650 }
-.card-trigger-cell { display:none }
 .card-use-cell { color:var(--muted); font-size:var(--small); min-width:0 }
 .history-card-editor .card-use-cell[data-enabled="true"] { color:var(--success) }
 .knowledge-pagination { display:flex; flex-wrap:wrap; align-items:center; justify-content:end; gap:var(--space-2) }
@@ -207,10 +206,13 @@ main > [data-panel] { display:grid; grid-template-columns:minmax(0,1fr); min-wid
 .knowledge-upload > summary { min-height:var(--tap); padding:var(--space-3); font-weight:650 }
 .knowledge-upload[open] > summary { border-block-end:1px solid var(--line) }
 .knowledge-upload input[type="file"] { max-width:100%; min-width:0 }
+.knowledge-drop { padding:var(--space-3); border:1px dashed var(--line); border-radius:var(--radius-2); background:var(--surface) }
+.knowledge-drop[data-dragging="true"] { border-color:var(--accent); background:var(--tint) }
+.knowledge-image { display:block; inline-size:min(100%,12rem); max-block-size:8rem; object-fit:contain; object-position:start; border-radius:var(--radius-1) }
+.knowledge-points { margin-block:var(--space-2); max-width:54ch }
 @media(min-width:48rem) {
   .knowledge-history { grid-template-columns:minmax(0,1fr) auto }
-  .history-card-head, .history-card-editor > summary { grid-template-columns:1rem minmax(0,3fr) minmax(0,2fr) 5rem }
-  .card-trigger-cell { display:block; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--muted); font-size:var(--small) }
+  .history-card-head, .history-card-editor > summary { grid-template-columns:1rem minmax(0,1fr) 5rem }
 }
 .history-loading { display:flex; align-items:flex-start; gap:var(--space-2); color:var(--accent) }
 .history-spinner { display:inline-block; flex:none; width:1em; height:1em; margin-block:.25em; border:.14em solid var(--line); border-block-start-color:var(--accent); border-radius:50%; animation:history-spin 900ms linear infinite }
@@ -580,7 +582,7 @@ legend { margin-bottom:var(--space-2) }
           <div class="panel-body">
             <div class="field"><label for="customer-message">客户原话</label><textarea id="customer-message" rows="5" maxlength="2800" required placeholder="输入一条你想测试的消息。"></textarea><small>知识库仅在 AI 回复模式下生效。系统会自动检索匹配资料，作为回复的依据。</small></div>
             <div class="form-actions"><button class="btn primary" id="preview-button" type="submit">生成试写</button><span class="local-status small" id="preview-feedback" role="status"></span></div>
-            <div class="preview-result" id="preview-result" hidden><h3 id="preview-mode"></h3><p id="preview-text"></p><small id="preview-sources"></small></div>
+            <div class="preview-result" id="preview-result" hidden><h3 id="preview-mode"></h3><p id="preview-text"></p><img class="knowledge-image" id="preview-image" alt="" hidden><small id="preview-sources"></small></div>
           </div>
         </form>
       </div>
@@ -698,17 +700,18 @@ legend { margin-bottom:var(--space-2) }
           <button class="btn" type="button" role="tab" id="knowledge-cards-tab" aria-controls="knowledge-cards-panel" aria-selected="true">知识卡片</button>
           <button class="btn" type="button" role="tab" id="knowledge-tone-tab" aria-controls="knowledge-tone-panel" aria-selected="false" tabindex="-1">回复语气</button>
           <button class="btn" type="button" role="tab" id="knowledge-files-tab" aria-controls="knowledge-files-panel" aria-selected="false" tabindex="-1">资料文件</button>
+          <button class="btn" type="button" role="tab" id="knowledge-images-tab" aria-controls="knowledge-images-panel" aria-selected="false" tabindex="-1">图片知识库</button>
         </div>
         <div class="panel-body" id="knowledge-cards-panel" role="tabpanel" aria-labelledby="knowledge-cards-tab">
           <div class="knowledge-tools">
             <form id="search-history-cards" class="history-card-search">
-              <input class="input" type="search" id="history-card-query" maxlength="100" aria-label="查找知识卡片" placeholder="搜索标题、触发词或内容">
+              <input class="input" type="search" id="history-card-query" maxlength="100" aria-label="查找知识卡片" placeholder="搜索标题或内容">
               <button class="btn" type="submit">搜索</button>
             </form>
             <small>启用的卡片仅用于 AI 回复。</small>
           </div>
           <div class="history-card-list" id="history-card-table" hidden>
-            <div class="history-card-head" aria-hidden="true"><span class="card-title-cell">卡片标题</span><span class="card-trigger-cell">触发词</span><span class="card-use-cell">状态</span></div>
+            <div class="history-card-head" aria-hidden="true"><span class="card-title-cell">卡片标题</span><span class="card-use-cell">状态</span></div>
             <div id="history-card-list"></div>
           </div>
           <p class="local-status small" id="history-card-feedback" role="status"></p>
@@ -780,18 +783,34 @@ legend { margin-bottom:var(--space-2) }
         <div class="panel-body" id="knowledge-files-panel" role="tabpanel" aria-labelledby="knowledge-files-tab" hidden>
           <details class="knowledge-upload">
             <summary>上传资料</summary>
-            <form class="panel-body" id="upload-form">
-              <div class="field"><label for="file">选择文件</label><input id="file" type="file" accept=".txt,.md,.csv,.docx,.pdf" required><small>支持 TXT、Markdown、CSV、Word 和 PDF，单份最多 8 MB。</small></div>
-              <div class="field">
-                <label for="knowledge-triggers">触发词（可选）</label>
-                <input class="input" id="knowledge-triggers" maxlength="180" placeholder="例如退款、退货、售后">
-                <small>用逗号或顿号分隔。命中任一词时用于 AI 回复，留空时按内容匹配。</small>
+            <form class="panel-body" id="upload-form" data-knowledge-kind="document">
+              <div class="field knowledge-drop">
+                <label for="file">拖拽资料到这里，或选择多份文件</label>
+                <input id="file" type="file" accept=".txt,.md,.csv,.docx,.pdf" multiple>
+                <small>支持 TXT、Markdown、CSV、Word 和 PDF，单份最多 8 MB。开启 AI 回复后自动提炼要点。</small>
+                <span class="small" data-file-selection role="status"></span>
               </div>
-              <div class="form-actions"><button class="btn primary" id="upload-button" type="submit">上传</button><span class="local-status small" id="file-feedback" role="status"></span></div>
+              <div class="form-actions"><button class="btn primary" id="upload-button" type="submit" disabled>上传</button><span class="local-status small" id="file-feedback" role="status"></span></div>
             </form>
           </details>
           <p class="small" id="file-count" role="status">正在读取资料</p>
           <div id="files"></div>
+        </div>
+        <div class="panel-body" id="knowledge-images-panel" role="tabpanel" aria-labelledby="knowledge-images-tab" hidden>
+          <details class="knowledge-upload">
+            <summary>上传图片</summary>
+            <form class="panel-body" id="image-upload-form" data-knowledge-kind="image">
+              <div class="field knowledge-drop">
+                <label for="knowledge-image-file">拖拽图片到这里，或选择多张图片</label>
+                <input id="knowledge-image-file" type="file" accept=".jpg,.jpeg,.png" multiple>
+                <small>支持 JPG、PNG，单张最多 8 MB。使用支持识图的模型后，AI 可选用合适的原图回复。</small>
+                <span class="small" data-file-selection role="status"></span>
+              </div>
+              <div class="form-actions"><button class="btn primary" type="submit" disabled>上传</button><span class="local-status small" id="image-file-feedback" role="status"></span></div>
+            </form>
+          </details>
+          <p class="small" id="image-file-count" role="status">正在读取图片</p>
+          <div id="knowledge-images"></div>
         </div>
       </div>
     </section>
@@ -961,6 +980,8 @@ function show(view, focusTab = false) {
   if (view === "knowledge") {
     refreshHistoryLearning();
     if (!historyCardsLoaded) loadHistoryCards();
+    if (!$("knowledge-files-panel").hidden) void loadFiles("document");
+    if (!$("knowledge-images-panel").hidden) void loadFiles("image");
   }
 }
 document.querySelectorAll("[data-view]").forEach(button => button.addEventListener("click", () => {
@@ -1680,6 +1701,10 @@ function renderOperation(item, kind) {
       item.welcomeStatus === "welcomeFailed" ? "群内欢迎语未确认" : "群内欢迎语待确认";
     record.append(element("p","small",status));
   }
+  if (kind === "reply" && item.imageStatus) {
+    const status = {sent:"图片已发送", skipped:"图片未发送", unconfirmed:"图片发送未确认"}[item.imageStatus];
+    if (status) record.append(element("p","small",status));
+  }
   return record;
 }
 async function loadOperationRecords(append = false, quiet = false) {
@@ -2123,6 +2148,12 @@ $("preview-form").addEventListener("submit",event => {
       const data = await jsonRequest("/api/preview","POST",{message:$("customer-message").value});
       $("preview-mode").textContent = {model:"模型试写",fixed:"固定回复",sample:"本地试写示例"}[data.mode];
       $("preview-text").textContent = data.text;
+      const image = $("preview-image");
+      image.hidden = !data.image;
+      if (data.image) {
+        image.src = knowledgeImageUrl(data.image);
+        image.alt = "试写选用 " + data.image.name;
+      } else image.removeAttribute("src");
       $("preview-sources").textContent = data.mode === "fixed" ? "知识库仅在 AI 回复模式下生效。"
         : data.mode === "sample" ? "保存 AI 模型配置后可检索知识库。"
         : data.sources.length ? "本次匹配资料　" + data.sources.join("、") : "本次没有匹配到知识库资料。";
@@ -2203,6 +2234,8 @@ function selectKnowledgeTab(selected, focus = false) {
     $(tab.getAttribute("aria-controls")).hidden = !active;
   }
   if (focus) selected.focus();
+  if (selected.id === "knowledge-files-tab") void loadFiles("document");
+  if (selected.id === "knowledge-images-tab") void loadFiles("image");
 }
 for (const [index,tab] of knowledgeTabs.entries()) {
   tab.addEventListener("click",() => selectKnowledgeTab(tab));
@@ -2421,14 +2454,11 @@ function historyCardEditor(card) {
   const editor = element("details", "history-card-editor");
   const summary = element("summary");
   const title = element("span", "card-title-cell");
-  const triggers = element("span", "card-trigger-cell");
   const status = element("span", "card-use-cell");
-  summary.append(title,triggers,status);
+  summary.append(title,status);
   const form = element("form", "panel-body");
   function render(saved) {
     title.textContent = saved.title;
-    triggers.textContent = saved.triggers || "按内容匹配";
-    triggers.title = triggers.textContent;
     status.textContent = saved.enabled ? "已启用" : "已停用";
     status.dataset.enabled = String(Boolean(saved.enabled));
   }
@@ -2436,7 +2466,6 @@ function historyCardEditor(card) {
   const fields = [
     ["title", "卡片标题", "input", 100, true],
     ["content", "可复用答复", "textarea", 1200, true],
-    ["triggers", "触发词（可选）", "input", 180, false],
   ];
   const inputs = {};
   for (const [name, label, tag, maxLength, required] of fields) {
@@ -2450,7 +2479,6 @@ function historyCardEditor(card) {
     const caption = element("label", "", label);
     caption.htmlFor = input.id;
     field.append(caption, input);
-    if (name === "triggers") field.append(element("small", "", "多个词用逗号或顿号分隔。留空时按相关性匹配。"));
     form.append(field);
     inputs[name] = input;
   }
@@ -2527,77 +2555,158 @@ $("history-card-query").addEventListener("input", event => {
 $("previous-history-cards").addEventListener("click", () => loadHistoryCards(historyCardsPage - 1));
 $("more-history-cards").addEventListener("click", () => loadHistoryCards(historyCardsPage + 1));
 
-async function loadFiles() {
-  try {
-    const files = await request("/api/knowledge");
-    note("file-count",files.length + " 份资料");
-    $("files").replaceChildren(...files.map(file => {
-      const row = element("div","file-row");
-      const summary = element("div");
-      summary.append(element("strong","",file.name),element("p","small",file.characters + " 字 · " + new Intl.DateTimeFormat("zh-CN").format(new Date(file.uploaded_at))));
-      const rule = label => label ? "触发词　" + label : "按内容相关性匹配";
-      const triggerNote = element("p","small",rule(file.triggers));
-      const editor = element("details");
-      editor.append(element("summary","","编辑触发词"));
-      const field = element("div","field");
-      const label = element("label","","触发词（可选）");
-      const input = element("input","input");
-      input.id = "knowledge-triggers-" + file.id;
-      input.maxLength = 180;
-      input.value = file.triggers || "";
-      label.htmlFor = input.id;
-      const feedback = element("small","local-status");
-      feedback.setAttribute("role","status");
-      const save = action("保存触发词","btn sm",() => pending(save,"正在保存",async () => {
-        feedback.textContent = "";
-        feedback.classList.remove("error");
-        try {
-          const updated = await jsonRequest("/api/knowledge/" + file.id,"PUT",{triggers:input.value});
-          input.value = updated.triggers;
-          triggerNote.textContent = rule(updated.triggers);
-          feedback.textContent = "已保存。";
-        } catch(error) {
-          feedback.textContent = error.message;
-          feedback.classList.add("error");
-        }
-      }));
-      const controls = element("div","inline");
-      controls.append(save,feedback);
-      field.append(label,input,controls);
-      editor.append(field);
-      summary.append(triggerNote,editor);
-      const remove = action("删除","btn sm danger",async () => {
-        if (!confirm("删除这份资料？")) return;
-        await pending(remove,"删除中",async () => {
-          try {
-            await request("/api/knowledge/" + file.id,{method:"DELETE"});
-            await loadFiles();
-            note("file-feedback","资料已删除。");
-          } catch(error) { note("file-feedback",error.message,true); }
-        });
-      });
-      remove.setAttribute("aria-label","删除资料 " + file.name);
-      row.append(summary,remove);
-      return row;
-    }));
-    if (!files.length) $("files").append(element("p","muted","暂无资料。"));
-  } catch(error) { note("file-count",error.message,true); }
+const knowledgeFiles = {
+  document:{list:"files", count:"file-count", feedback:"file-feedback", label:"资料", unit:"份", stamp:"", revision:0},
+  image:{list:"knowledge-images", count:"image-file-count", feedback:"image-file-feedback", label:"图片", unit:"张", stamp:"", revision:0}
+};
+
+function knowledgeImageUrl(file) {
+  return "/api/knowledge/images/" + file.id + "?" + new URLSearchParams({at:file.uploaded_at});
 }
-$("upload-form").addEventListener("submit",event => {
-  event.preventDefault();
-  const file = $("file").files[0];
-  if (!file) return;
-  pending($("upload-button"),"正在上传",async () => {
-    try {
-      const params = new URLSearchParams({name:file.name,triggers:$("knowledge-triggers").value});
-      await request("/api/knowledge?" + params,{method:"POST",body:file});
-      $("file").value = "";
-      $("knowledge-triggers").value = "";
-      await loadFiles();
-      note("file-feedback","资料已上传。");
-    } catch(error) { note("file-feedback",error.message,true); }
+
+function knowledgeFileRow(file, panel, open) {
+  const row = element("div","file-row");
+  const summary = element("div");
+  summary.append(element("strong","",file.name));
+  if (file.kind === "image") {
+    const image = element("img","knowledge-image");
+    image.src = knowledgeImageUrl(file);
+    image.alt = file.name;
+    image.loading = "lazy";
+    summary.append(image);
+  }
+  const size = file.kind === "image" ? Math.ceil(file.size / 1024) + " KB" : file.characters + " 字";
+  const status = {
+    running:"正在后台提炼", ready:file.points.length ? "提炼完成" : "暂无可提炼要点",
+    error:"提炼失败", idle:"待提炼"
+  }[file.analysisState];
+  summary.append(element("p","small",size + " · " + status));
+  if (file.points.length) {
+    const details = element("details","knowledge-points");
+    details.dataset.filePoint = file.id;
+    details.open = open.has(String(file.id));
+    details.append(element("summary","",file.kind === "image" ? "图片说明" : "查看提炼要点"));
+    const points = element("ul","small");
+    points.append(...file.points.map(point =>
+      element("li","",file.kind === "image" ? point.excerpt : point.title + "　" + point.excerpt)));
+    details.append(points);
+    summary.append(details);
+  }
+  const controls = element("div","inline");
+  if (file.analysisState === "idle" || file.analysisState === "error") {
+    const analyze = action(file.analysisState === "error" ? "重试提炼" : "提炼","btn sm",() => pending(analyze,"正在启动",async () => {
+      try {
+        await jsonRequest("/api/knowledge/" + file.id + "/analysis","POST",{});
+        await loadFiles(file.kind);
+      } catch(error) { note(panel.feedback,error.message,true); }
+    }));
+    analyze.setAttribute("aria-label","提炼 " + file.name);
+    controls.append(analyze);
+  }
+  const remove = action("删除","btn sm danger",async () => {
+    if (!confirm("删除这" + panel.unit + panel.label + "？")) return;
+    await pending(remove,"删除中",async () => {
+      try {
+        await request("/api/knowledge/" + file.id,{method:"DELETE"});
+        await loadFiles(file.kind);
+        note(panel.feedback,panel.label + "已删除。");
+      } catch(error) { note(panel.feedback,error.message,true); }
+    });
   });
-});
+  remove.setAttribute("aria-label","删除 " + file.name);
+  controls.append(remove);
+  row.append(summary,controls);
+  return row;
+}
+
+async function loadFiles(kind = "document") {
+  const panel = knowledgeFiles[kind];
+  const revision = ++panel.revision;
+  try {
+    const files = await request("/api/knowledge?kind=" + kind);
+    if (revision !== panel.revision) return;
+    panel.running = files.some(file => file.analysisState === "running");
+    note(panel.count,files.length + " " + panel.unit + panel.label);
+    const stamp = JSON.stringify(files);
+    if (panel.stamp === stamp) return;
+    panel.stamp = stamp;
+    const list = $(panel.list);
+    const open = new Set([...list.querySelectorAll("details[open]")].map(node => node.dataset.filePoint));
+    list.replaceChildren(...files.map(file => knowledgeFileRow(file,panel,open)));
+    if (!files.length) list.append(element("p","muted","暂无" + panel.label + "。"));
+  } catch(error) {
+    if (revision === panel.revision) note(panel.count,error.message,true);
+  }
+}
+
+for (const form of document.querySelectorAll("[data-knowledge-kind]")) {
+  const kind = form.dataset.knowledgeKind;
+  const panel = knowledgeFiles[kind];
+  const input = form.querySelector('input[type="file"]');
+  const drop = form.querySelector(".knowledge-drop");
+  const submit = form.querySelector('button[type="submit"]');
+  const selection = form.querySelector("[data-file-selection]");
+  let selected = [], uploading = false;
+  function selectFiles(files) {
+    selected = [...files];
+    selection.textContent = selected.length
+      ? "已选 " + selected.length + " " + panel.unit + "　" + selected.slice(0,3).map(file => file.name).join("、")
+        + (selected.length > 3 ? " 等" : "") : "";
+    submit.disabled = uploading || !selected.length;
+  }
+  input.addEventListener("change", () => selectFiles(input.files));
+  drop.addEventListener("dragover", event => {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = uploading ? "none" : "copy";
+    if (!uploading) drop.dataset.dragging = "true";
+  });
+  drop.addEventListener("dragleave", event => {
+    if (!drop.contains(event.relatedTarget)) delete drop.dataset.dragging;
+  });
+  drop.addEventListener("drop", event => {
+    event.preventDefault();
+    delete drop.dataset.dragging;
+    if (uploading || !event.dataTransfer.files.length) return;
+    input.value = "";
+    selectFiles(event.dataTransfer.files);
+  });
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (uploading || !selected.length) return;
+    const files = [...selected], failed = [];
+    const account = sessionStorage.getItem("wechat-workbench-account");
+    let completed = 0, message = "";
+    uploading = true;
+    input.disabled = true;
+    await pending(submit,"正在上传",async () => {
+      for (const [index,file] of files.entries()) {
+        if (sessionStorage.getItem("wechat-workbench-account") !== account) return;
+        note(panel.feedback,"正在上传 " + (index + 1) + " / " + files.length);
+        try {
+          const params = new URLSearchParams({name:file.name,kind});
+          await request("/api/knowledge?" + params,{method:"POST",body:file});
+          completed++;
+        } catch(error) {
+          failed.push(file);
+          message = error.message;
+        }
+      }
+      await loadFiles(kind);
+      note(panel.feedback,"已上传 " + completed + " " + panel.unit +
+        (failed.length ? "，" + failed.length + " " + panel.unit + "失败。" + message : "。"),Boolean(failed.length));
+    });
+    uploading = false;
+    input.disabled = false;
+    input.value = "";
+    selectFiles(failed);
+  });
+}
+setInterval(() => {
+  if (document.hidden || currentView !== "knowledge") return;
+  if (knowledgeFiles.document.running && !$("knowledge-files-panel").hidden) void loadFiles("document");
+  if (knowledgeFiles.image.running && !$("knowledge-images-panel").hidden) void loadFiles("image");
+},3000);
 show(location.hash.slice(1));
 Promise.all([loadStatus(),loadAutomationStatus(),loadSettings(),loadOperationRecords(),loadFiles()]);
 if (currentView !== "knowledge") refreshHistoryLearning();

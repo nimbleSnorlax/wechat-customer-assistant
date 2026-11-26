@@ -26,7 +26,7 @@ internal static class GroupWorker
         string? GroupCustomerId = null, string? ReplyCustomerId = null, bool FocusAttempted = false,
         string? HoldText = null, bool ResumeReply = false);
     private sealed record FocusDecision(bool Allowed);
-    private sealed record DeliveryDecision(bool Allowed);
+    private sealed record DeliveryDecision(bool Allowed, string? ImagePath);
     private sealed record ReplyRecovery(string ContactId, string TextSha256, long ExpiresAt);
     private sealed record ReplyPlan(string Id, string Text);
     private sealed record ReplyDecision(ReplyPlan? Plan);
@@ -408,8 +408,8 @@ internal static class GroupWorker
             return false;
         }
 
-        Task Acknowledge(string state) => Post(api, "reply-result",
-            new { plan.Id, state, completedAt = DateTimeOffset.Now.ToString("O") });
+        Task Acknowledge(string state, string? imageStatus = null) => Post(api, "reply-result",
+            new { plan.Id, state, imageStatus, completedAt = DateTimeOffset.Now.ToString("O") });
 
         var started = false;
         var listenerPaused = false;
@@ -444,7 +444,8 @@ internal static class GroupWorker
             SupperMouseKey.CheckDesktopInput();
             using var delivery = await SendJson(api, "reply-start", new { plan.Id, config.Revision }, stopping);
             delivery.EnsureSuccessStatusCode();
-            if ((await delivery.Content.ReadFromJsonAsync<DeliveryDecision>(cancellationToken: stopping))?.Allowed != true)
+            var decision = await delivery.Content.ReadFromJsonAsync<DeliveryDecision>(cancellationToken: stopping);
+            if (decision?.Allowed != true)
                 return false;
             started = true;
             TraceWorker("Verified current incoming text; submitting reply.");
@@ -459,7 +460,34 @@ internal static class GroupWorker
                     message.MessageType == MessageType.文字 && message.Who == "我" && message.Message.Trim() == plan.Text))
                     throw new InvalidOperationException("The automatic reply could not be confirmed in the conversation.");
             }
-            await Acknowledge("sent");
+            string? imageStatus = null;
+            if (decision.ImagePath is { Length: > 0 } imagePath)
+            {
+                imageStatus = "skipped";
+                if (File.Exists(imagePath) && Path.GetFileName(Path.GetDirectoryName(imagePath)) == "knowledge-images"
+                    && Path.GetExtension(imagePath) is (".jpg" or ".jpeg" or ".png")
+                    && sent is { MessageType: MessageType.文字, Who: "我" } && sent.Message.Trim() == plan.Text
+                    && !stopping.IsCancellationRequested && await StillCurrent(api, config.Revision)
+                    && await client.GetOnlyTitle() == target.Name)
+                {
+                    try
+                    {
+                        SupperMouseKey.CheckDesktopInput();
+                        await client.SendFile(target.Name, [imagePath]);
+                        var latest = (await ReadLatest(client, target.Name, 1)).LastOrDefault();
+                        imageStatus = latest is { Who: "我" } && (latest.MessageType == MessageType.图片
+                            || latest.MessageType == MessageType.文件 &&
+                            latest.Message.Contains(Path.GetFileName(imagePath), StringComparison.OrdinalIgnoreCase))
+                            ? "sent" : "unconfirmed";
+                    }
+                    catch (Exception error)
+                    {
+                        imageStatus = "unconfirmed";
+                        TraceWorker("Image delivery could not be confirmed: " + error.GetType().Name);
+                    }
+                }
+            }
+            await Acknowledge("sent", imageStatus);
             TraceWorker("Reply delivery confirmed.");
             return true;
         }
