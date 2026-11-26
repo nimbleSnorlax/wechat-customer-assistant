@@ -6,10 +6,13 @@ using System.IO.Compression;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Windows.Forms;
 
 internal static class Setup
 {
+    private static readonly int[] FileRetryDelays = { 250, 500, 1000, 2000, 3000 };
+
     [STAThread]
     private static int Main(string[] args)
     {
@@ -50,7 +53,7 @@ internal static class Setup
         string staging = Path.GetFullPath(target + ".installing-" + Guid.NewGuid().ToString("N"));
         if (Path.GetDirectoryName(staging) != root || Path.GetDirectoryName(target) != root)
             throw new IOException("安装目录无效。");
-        Directory.CreateDirectory(staging);
+        RunInstallStep("创建安装临时目录", staging, () => Directory.CreateDirectory(staging));
         try
         {
             using (var payload = Assembly.GetExecutingAssembly().GetManifestResourceStream("WorkbenchPayload"))
@@ -62,17 +65,60 @@ internal static class Setup
                     string path = Path.GetFullPath(Path.Combine(staging, entry.FullName));
                     if (!path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                         throw new IOException("安装包内的路径无效。");
-                    Directory.CreateDirectory(Path.GetDirectoryName(path));
-                    using (var input = entry.Open())
-                    using (var output = new FileStream(path, FileMode.CreateNew))
-                        input.CopyTo(output);
+                    ExtractInstallFile(entry, path);
                 }
             }
-            Directory.Move(staging, target);
+            RunInstallStep("保存安装结果", target, () => Directory.Move(staging, target));
         }
         finally
         {
-            if (Directory.Exists(staging)) Directory.Delete(staging, true);
+            // A locked file in the staging directory must not hide the installation error.
+            try { if (Directory.Exists(staging)) Directory.Delete(staging, true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    private static void ExtractInstallFile(ZipArchiveEntry entry, string path)
+    {
+        bool created = false;
+        RunInstallStep("解包安装文件", path, () =>
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            using (var input = entry.Open())
+            using (var output = new FileStream(path, created ? FileMode.Create : FileMode.CreateNew,
+                                               FileAccess.Write, FileShare.None))
+            {
+                created = true;
+                input.CopyTo(output);
+            }
+        });
+    }
+
+    private static void RunInstallStep(string step, string path, Action action)
+    {
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                action();
+                return;
+            }
+            catch (Exception error)
+            {
+                if (!(error is IOException) && !(error is UnauthorizedAccessException))
+                    throw;
+                uint hresult = unchecked((uint)error.HResult);
+                uint code = hresult & 0xffff;
+                if (hresult >> 16 == 0x8007 && (code == 5 || code == 32 || code == 33)
+                    && attempt < FileRetryDelays.Length)
+                {
+                    Thread.Sleep(FileRetryDelays[attempt]);
+                    continue;
+                }
+                throw new IOException(step + "失败。" + Environment.NewLine + path + Environment.NewLine
+                                      + error.Message + " (0x" + hresult.ToString("X8") + ")", error);
+            }
         }
     }
 
