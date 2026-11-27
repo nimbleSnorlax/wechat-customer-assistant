@@ -163,8 +163,9 @@ def build(repository, output, release_version=None, reader_source=None):
             for name in ("x64", "runtimes/win", "runtimes/win-x64"):
                 add_tree(archive, bridge / name)
             archive.writestr(".run/sdk/" + BRIDGE_MARKER, BRIDGE_VERSION + "\n")
-        compile_cs("Setup.cs", output, "/r:Microsoft.CSharp.dll", "/r:System.IO.Compression.dll",
-                   "/r:System.IO.Compression.FileSystem.dll", f"/resource:{payload},WorkbenchPayload")
+        compile_cs("Setup.cs", output, "/r:Microsoft.CSharp.dll", "/r:System.Drawing.dll", "/r:System.IO.Compression.dll",
+                   "/r:System.IO.Compression.FileSystem.dll", f"/resource:{payload},WorkbenchPayload",
+                   str(HERE / "SetupWizard.cs"), str(HERE / "SetupDiagnostics.cs"))
     print(output)
 
 
